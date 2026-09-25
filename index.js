@@ -5,9 +5,9 @@ const path = require('path');
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: '5mb' }));
-app.use(express.urlencoded({ extended: true, limit: '5mb' }));
-app.use(express.text({ type: ['text/plain', 'text/lua'], limit: '5mb' }));
+app.use(express.json({ limit: '6mb' }));
+app.use(express.urlencoded({ extended: true, limit: '6mb' }));
+app.use(express.text({ type: ['text/plain', 'text/lua'], limit: '6mb' }));
 
 app.use((req, res, next) => {
   if (typeof req.body === 'string' && req.body.trim().startsWith('{')) {
@@ -19,326 +19,315 @@ app.use((req, res, next) => {
 
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, x-api-key');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
   if (req.method === 'OPTIONS') return res.sendStatus(200);
   next();
 });
 
-const ADMIN_KEY = process.env.API_KEY || 'JXZXCV';
-const START = Date.now();
-const STORE_FILE = path.join('/tmp', 'script-host.json');
+const FILE = path.join('/tmp', 'dashboard-store.json');
+const g = global.__dash || { scripts: {}, users: {}, logs: [], hits: 0 };
+global.__dash = g;
 
-const g = global.__host || {
-  scripts: {
-    trade: {
-      name: 'trade',
-      title: 'سوق السيارات',
-      code: '-- الصق سكربتك من لوحة التحكم',
-      updatedAt: Date.now(),
-    },
-  },
-  users: {},
-  logs: [],
-  trades: {},
-  tradeRequests: {},
-  dmMessages: {},
-  totalTrades: 0,
-};
-global.__host = g;
-
-function loadStore() {
+function load() {
   try {
-    if (fs.existsSync(STORE_FILE)) {
-      const raw = JSON.parse(fs.readFileSync(STORE_FILE, 'utf8'));
-      if (raw.scripts) g.scripts = raw.scripts;
-      if (raw.users) g.users = raw.users;
-      if (raw.logs) g.logs = raw.logs;
-    }
+    if (fs.existsSync(FILE)) Object.assign(g, JSON.parse(fs.readFileSync(FILE, 'utf8')));
   } catch (e) {}
 }
-function saveStore() {
-  try {
-    fs.writeFileSync(STORE_FILE, JSON.stringify({
-      scripts: g.scripts,
-      users: g.users,
-      logs: g.logs.slice(0, 80),
-    }));
-  } catch (e) {}
+function save() {
+  try { fs.writeFileSync(FILE, JSON.stringify(g)); } catch (e) {}
 }
-loadStore();
+load();
 
-function slugify(s) {
-  return String(s || 'trade').toLowerCase().replace(/[^a-z0-9-_]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') || 'trade';
+function slug(s) {
+  return String(s || '').toLowerCase().trim().replace(/[^a-z0-9\u0600-\u06ff-_]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
 }
-function addLog(type, message) {
-  g.logs.unshift({ type, message, time: Date.now() });
-  if (g.logs.length > 100) g.logs.length = 100;
-  saveStore();
+function originOf(req) {
+  const host = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim();
+  const proto = String(req.headers['x-forwarded-proto'] || 'https').split(',')[0].trim();
+  return proto + '://' + host;
 }
-function admin(req, res, next) {
-  const key = req.headers['x-api-key'] || req.query.key || (req.body && req.body.adminKey);
-  if (key !== ADMIN_KEY) return res.status(401).json({ success: false, error: 'Unauthorized' });
-  next();
+function loadUrl(req, name) {
+  return originOf(req) + '/script/' + encodeURIComponent(name);
 }
-function isOnline(u) { return u && Date.now() - u.lastSeen < 2 * 60 * 1000; }
-function toInt(v) { const n = parseInt(v, 10); return Number.isFinite(n) ? n : 0; }
-function convKey(a, b) { a = String(a); b = String(b); return a < b ? a + '_' + b : b + '_' + a; }
-function activeTrades() {
-  const now = Date.now();
-  return Object.values(g.trades || {}).filter(t => t.status === 'pending' && now - t.createdAt < 30000).sort((a,b)=>b.createdAt-a.createdAt);
+function addLog(type, message, extra) {
+  g.logs.unshift({ type, message, extra: extra || {}, time: Date.now() });
+  if (g.logs.length > 150) g.logs.length = 150;
+  save();
 }
+function isOnline(u) { return u && Date.now() - (u.lastSeen || 0) < 120000; }
 
-function dashboardHtml(req) {
-  const host = (req.headers['x-forwarded-host'] || req.headers.host || 'your-project.vercel.app').split(',')[0];
-  const proto = (req.headers['x-forwarded-proto'] || 'https');
-  const base = proto + '://' + host;
+function page() {
   return `<!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>لوحة التحكم</title>
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{font-family:Segoe UI,Tahoma,sans-serif;background:#0f0f16;color:#e8e8f0;padding:20px}
-.wrap{max-width:1200px;margin:0 auto}
-.top{background:linear-gradient(135deg,#1b1b28,#26263a);border:1px solid #32324a;border-radius:16px;padding:20px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px}
-h1{background:linear-gradient(90deg,#7db4ff,#b79bff);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:16px}
-.card{background:#161622;border:1px solid #2d2d44;border-radius:14px;padding:16px;margin-bottom:16px}
-.num{font-size:30px;font-weight:700;color:#7db4ff}
-.lbl{color:#8b8ba4;font-size:13px}
-textarea,input{width:100%;background:#101018;border:1px solid #33334d;color:#fff;border-radius:10px;padding:10px;font-family:Consolas,monospace}
-textarea{min-height:280px}
-button{background:linear-gradient(135deg,#5b8cff,#8a6bff);border:none;color:#fff;padding:10px 16px;border-radius:10px;font-weight:700;cursor:pointer}
-.item{background:#1c1c2b;border:1px solid #333;border-radius:10px;padding:10px;margin-top:8px}
-.code{background:#000;color:#7CFFB2;padding:10px;border-radius:8px;word-break:break-all;font-family:monospace;font-size:13px}
-</style>
+<title>Script Hub Dashboard</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = { darkMode: 'class', theme: { extend: {
+  colors: { ink:'#07070d', panel:'#101018', line:'#242436', accent:'#7c5cff' },
+  fontFamily: { sans:['IBM Plex Sans Arabic','Segoe UI','Tahoma','sans-serif'] }
+}}}
+</script>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;600;700&display=swap" rel="stylesheet">
 </head>
-<body>
-<div class="wrap">
-  <div class="top">
+<body class="bg-ink text-zinc-100 font-sans min-h-screen">
+<div class="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_top,rgba(124,92,255,.18),transparent_40%),radial-gradient(circle_at_bottom_left,rgba(56,189,248,.08),transparent_30%)]"></div>
+<div class="relative max-w-7xl mx-auto px-5 py-8">
+  <header class="flex flex-col md:flex-row md:items-end md:justify-between gap-4 mb-8">
     <div>
-      <h1>لوحة التحكم</h1>
-      <div class="lbl">رفع السكربت + رابط loadstring + الإحصائيات</div>
+      <p class="text-xs tracking-[.3em] text-violet-300/80 mb-2">SCRIPT CONTROL CENTER</p>
+      <h1 class="text-4xl font-bold bg-gradient-to-l from-violet-300 via-fuchsia-200 to-sky-300 bg-clip-text text-transparent">لوحة إدارة السكربتات</h1>
+      <p class="text-zinc-400 mt-2">حفظ، تعديل، حذف، وتوليد رابط loadstring من السيرفر مباشرة</p>
     </div>
-    <div class="lbl">المضيف: ${base}</div>
-  </div>
-  <div class="grid">
-    <div class="card"><div class="num" id="s-online">0</div><div class="lbl">متصل الآن</div></div>
-    <div class="card"><div class="num" id="s-users">0</div><div class="lbl">إجمالي اللاعبين</div></div>
-    <div class="card"><div class="num" id="s-trades">0</div><div class="lbl">عروض نشطة</div></div>
-    <div class="card"><div class="num" id="s-logs">0</div><div class="lbl">سجلات</div></div>
-  </div>
-  <div class="card">
-    <h3>لصق سكربتك</h3>
-    <p class="lbl" style="margin:8px 0">الاسم يظهر في الرابط: /load/الاسم</p>
-    <input id="name" value="trade" placeholder="trade">
-    <input id="title" value="سوق السيارات" placeholder="عنوان" style="margin-top:8px">
-    <textarea id="code" style="margin-top:8px" placeholder="الصق كود اللوا هنا"></textarea>
-    <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
-      <button id="save">حفظ السكربت</button>
-      <input id="admin" placeholder="مفتاح الأدمن JXZXCV" style="max-width:220px">
+    <div class="text-sm text-zinc-400 bg-panel/80 border border-line rounded-2xl px-4 py-3" id="originBox">جاري قراءة عنوان السيرفر...</div>
+  </header>
+
+  <section class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+    <article class="bg-panel/90 border border-line rounded-3xl p-5 shadow-2xl shadow-violet-950/20">
+      <p class="text-zinc-400 text-sm">السكربتات</p>
+      <p class="text-3xl font-bold mt-2" id="cScripts">0</p>
+    </article>
+    <article class="bg-panel/90 border border-line rounded-3xl p-5">
+      <p class="text-zinc-400 text-sm">متصل الآن</p>
+      <p class="text-3xl font-bold mt-2 text-emerald-300" id="cOnline">0</p>
+    </article>
+    <article class="bg-panel/90 border border-line rounded-3xl p-5">
+      <p class="text-zinc-400 text-sm">إجمالي اللاعبين</p>
+      <p class="text-3xl font-bold mt-2 text-sky-300" id="cUsers">0</p>
+    </article>
+    <article class="bg-panel/90 border border-line rounded-3xl p-5">
+      <p class="text-zinc-400 text-sm">عمليات التحميل</p>
+      <p class="text-3xl font-bold mt-2 text-fuchsia-300" id="cHits">0</p>
+    </article>
+  </section>
+
+  <section class="grid lg:grid-cols-5 gap-6">
+    <div class="lg:col-span-3 bg-panel/90 border border-line rounded-3xl p-6">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-xl font-semibold" id="formTitle">إضافة سكربت جديد</h2>
+        <button id="resetBtn" class="text-sm text-zinc-400 hover:text-white">تفريغ</button>
+      </div>
+      <input type="hidden" id="editOld">
+      <label class="block text-sm text-zinc-400 mb-2">اسم السكربت</label>
+      <input id="name" class="w-full mb-4 bg-black/40 border border-line rounded-2xl px-4 py-3 outline-none focus:border-violet-400" placeholder="مثلا trade">
+      <label class="block text-sm text-zinc-400 mb-2">سورس الكود</label>
+      <textarea id="code" class="w-full h-72 bg-black/40 border border-line rounded-2xl px-4 py-3 font-mono text-sm outline-none focus:border-violet-400" placeholder="الصق كود Luau هنا"></textarea>
+      <button id="saveBtn" class="mt-4 w-full rounded-2xl py-3 font-semibold bg-gradient-to-l from-violet-600 to-fuchsia-500 hover:opacity-95 transition">حفظ السكربت وإنشاء الرابط</button>
+      <p id="saveMsg" class="text-sm mt-3 text-zinc-400"></p>
     </div>
-    <div id="loadline" class="code" style="margin-top:12px">loadstring(game:HttpGet("${base}/load/trade"))()</div>
-  </div>
-  <div class="card">
-    <h3>السكربتات المحفوظة</h3>
-    <div id="scripts"></div>
-  </div>
-  <div class="card">
-    <h3>اللاعبين</h3>
-    <div id="users"></div>
-  </div>
-  <div class="card">
-    <h3>السجلات</h3>
-    <div id="logs"></div>
-  </div>
+
+    <div class="lg:col-span-2 space-y-6">
+      <div class="bg-panel/90 border border-line rounded-3xl p-6">
+        <h2 class="text-xl font-semibold mb-4">السكربتات المحفوظة</h2>
+        <div id="list" class="space-y-3 max-h-[28rem] overflow-auto"></div>
+      </div>
+      <div class="bg-panel/90 border border-line rounded-3xl p-6">
+        <h2 class="text-xl font-semibold mb-4">سجلات اللعبة</h2>
+        <div id="logs" class="space-y-2 max-h-72 overflow-auto text-sm"></div>
+      </div>
+    </div>
+  </section>
 </div>
 <script>
-const BASE = ${JSON.stringify(base)};
-function esc(s){return String(s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
-async function j(url){const r=await fetch(url);return r.ok?r.json():null;}
-async function refresh(){
-  const s=await j('/dashboard/stats');
-  if(s){
-    document.getElementById('s-online').textContent=s.online||0;
-    document.getElementById('s-users').textContent=s.users||0;
-    document.getElementById('s-trades').textContent=s.trades||0;
-    document.getElementById('s-logs').textContent=s.logs||0;
-  }
-  const list=await j('/api/scripts')||[];
-  document.getElementById('scripts').innerHTML=list.length?list.map(x=>'<div class="item"><b>'+esc(x.name)+'</b> — '+esc(x.title||'')+'<div class="code">loadstring(game:HttpGet("'+BASE+'/load/'+esc(x.name)+'"))()</div></div>').join(''):'لا يوجد';
-  const users=await j('/dashboard/online')||[];
-  document.getElementById('users').innerHTML=users.length?users.map(u=>'<div class="item"><b>'+esc(u.username)+'</b> — '+esc(u.robloxId)+'</div>').join(''):'لا أحد متصل';
-  const logs=await j('/dashboard/logs')||[];
-  document.getElementById('logs').innerHTML=logs.length?logs.map(x=>'<div class="item">'+esc(x.message)+'</div>').join(''):'لا توجد سجلات';
+const api = location.origin;
+document.getElementById('originBox').textContent = api;
+
+function esc(s){return String(s||'').replace(/[&<>"']/g,c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));}
+function loadLine(name){return 'loadstring(game:HttpGet("' + api + '/script/' + name + '"))()';}
+
+async function getJSON(url){
+  const r = await fetch(url);
+  return r.ok ? r.json() : null;
 }
-document.getElementById('save').onclick=async()=>{
-  const admin=document.getElementById('admin').value||'JXZXCV';
-  const name=document.getElementById('name').value||'trade';
-  const r=await fetch('/api/scripts/save',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':admin},body:JSON.stringify({name,title:document.getElementById('title').value,code:document.getElementById('code').value})});
-  const d=await r.json();
-  document.getElementById('loadline').textContent=d.loadstring||'فشل الحفظ';
+
+async function refresh(){
+  const s = await getJSON('/api/stats');
+  if(s){
+    document.getElementById('cScripts').textContent = s.scripts||0;
+    document.getElementById('cOnline').textContent = s.online||0;
+    document.getElementById('cUsers').textContent = s.users||0;
+    document.getElementById('cHits').textContent = s.hits||0;
+  }
+  const scripts = await getJSON('/api/scripts') || [];
+  const list = document.getElementById('list');
+  if(!scripts.length){ list.innerHTML = '<p class="text-zinc-500">لا توجد سكربتات بعد</p>'; }
+  else {
+    list.innerHTML = scripts.map(function(x){
+      return '<div class="rounded-2xl border border-line bg-black/30 p-4">'
+        + '<div class="flex items-center justify-between gap-2"><div>'
+        + '<p class="font-semibold">'+esc(x.name)+'</p>'
+        + '<p class="text-xs text-zinc-500 mt-1">'+(x.length||0)+' حرف</p></div>'
+        + '<div class="flex gap-2">'
+        + '<button data-edit="'+esc(x.name)+'" class="text-xs px-3 py-1 rounded-lg bg-violet-600/30 hover:bg-violet-600/50">تعديل</button>'
+        + '<button data-del="'+esc(x.name)+'" class="text-xs px-3 py-1 rounded-lg bg-rose-600/30 hover:bg-rose-600/50">حذف</button>'
+        + '</div></div>'
+        + '<code class="block mt-3 text-[11px] leading-5 text-emerald-300 break-all">'+esc(loadLine(x.name))+'</code>'
+        + '<button data-copy="'+esc(loadLine(x.name))+'" class="mt-2 text-xs text-zinc-400 hover:text-white">نسخ loadstring</button></div>';
+    }).join('');
+  const logs = await getJSON('/api/logs') || [];
+  document.getElementById('logs').innerHTML = logs.length ? logs.map(function(x){return '<div class="rounded-xl border border-line px-3 py-2"><span class="text-zinc-300">'+esc(x.message)+'</span></div>';}).join('') : '<p class="text-zinc-500">لا توجد سجلات</p>';
+}
+
+document.getElementById('saveBtn').onclick = async () => {
+  const name = document.getElementById('name').value.trim();
+  const code = document.getElementById('code').value;
+  const old = document.getElementById('editOld').value;
+  const msg = document.getElementById('saveMsg');
+  if(!name || !code.trim()){ msg.textContent = 'اكتب الاسم والسورس'; return; }
+  const r = await fetch('/api/scripts', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ name, code, oldName: old })
+  });
+  const d = await r.json();
+  msg.textContent = d.success ? ('تم الحفظ: ' + d.loadstring) : (d.error || 'فشل الحفظ');
+  document.getElementById('editOld').value = '';
+  document.getElementById('formTitle').textContent = 'إضافة سكربت جديد';
   refresh();
 };
-document.getElementById('name').oninput=()=>{
-  const n=(document.getElementById('name').value||'trade').toLowerCase();
-  document.getElementById('loadline').textContent='loadstring(game:HttpGet("'+BASE+'/load/'+n+'"))()';
+
+document.getElementById('resetBtn').onclick = () => {
+  document.getElementById('name').value = '';
+  document.getElementById('code').value = '';
+  document.getElementById('editOld').value = '';
+  document.getElementById('formTitle').textContent = 'إضافة سكربت جديد';
 };
+
+document.getElementById('list').onclick = async (e) => {
+  const edit = e.target.getAttribute('data-edit');
+  const del = e.target.getAttribute('data-del');
+  const copy = e.target.getAttribute('data-copy');
+  if(copy){ navigator.clipboard.writeText(copy); return; }
+  if(edit){
+    const d = await getJSON('/api/scripts/' + encodeURIComponent(edit));
+    if(!d) return;
+    document.getElementById('name').value = d.name;
+    document.getElementById('code').value = d.code || '';
+    document.getElementById('editOld').value = d.name;
+    document.getElementById('formTitle').textContent = 'تعديل السكربت';
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+  if(del && confirm('حذف ' + del + '؟')){
+    await fetch('/api/scripts/' + encodeURIComponent(del), { method:'DELETE' });
+    refresh();
+  }
+};
+
 refresh();
-setInterval(refresh,2000);
+setInterval(refresh, 2500);
 </script>
-</body></html>`;
+</body>
+</html>`;
 }
 
-app.get('/', (req, res) => {
+app.get('/', (_req, res) => {
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  res.send(dashboardHtml(req));
-});
-app.get('/dashboard', (req, res) => {
-  res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  res.send(dashboardHtml(req));
+  res.send(page());
 });
 
-app.get('/dashboard/stats', (_req, res) => {
+app.get('/api/stats', (_req, res) => {
   res.json({
-    success: true,
-    online: Object.values(g.users).filter(isOnline).length,
-    users: Object.keys(g.users).length,
-    trades: activeTrades().length,
-    logs: g.logs.length,
     scripts: Object.keys(g.scripts).length,
-    uptime: Date.now() - START,
+    users: Object.keys(g.users).length,
+    online: Object.values(g.users).filter(isOnline).length,
+    hits: g.hits || 0,
+    logs: (g.logs || []).length
   });
 });
-app.get('/dashboard/online', (_req, res) => res.json(Object.values(g.users).filter(isOnline)));
-app.get('/dashboard/logs', (_req, res) => res.json(g.logs));
 
-app.get('/api/scripts', (_req, res) => {
-  res.json(Object.values(g.scripts).map(s => ({ name: s.name, title: s.title, updatedAt: s.updatedAt, length: (s.code || '').length })));
+app.get('/api/scripts', (req, res) => {
+  const list = Object.values(g.scripts).map(s => ({
+    name: s.name,
+    length: (s.code || '').length,
+    updatedAt: s.updatedAt,
+    url: loadUrl(req, s.name),
+    loadstring: 'loadstring(game:HttpGet("' + loadUrl(req, s.name) + '"))()'
+  })).sort((a,b) => (b.updatedAt||0) - (a.updatedAt||0));
+  res.json(list);
 });
 
-app.post('/api/scripts/save', admin, (req, res) => {
-  const name = slugify(req.body.name || 'trade');
+app.get('/api/scripts/:name', (req, res) => {
+  const s = g.scripts[slug(req.params.name)] || g.scripts[req.params.name];
+  if (!s) return res.status(404).json({ success: false, error: 'not found' });
+  res.json(s);
+});
+
+app.post('/api/scripts', (req, res) => {
+  const name = slug(req.body.name);
+  if (!name) return res.status(400).json({ success: false, error: 'الاسم مطلوب' });
   const code = String(req.body.code || '');
-  if (!code.trim()) return res.status(400).json({ success: false, error: 'empty script' });
-  g.scripts[name] = { name, title: req.body.title || name, code, updatedAt: Date.now() };
-  saveStore();
+  if (!code.trim()) return res.status(400).json({ success: false, error: 'السورس فارغ' });
+  const oldName = slug(req.body.oldName || '');
+  if (oldName && oldName !== name) delete g.scripts[oldName];
+  g.scripts[name] = { name, code, updatedAt: Date.now() };
+  save();
   addLog('script', 'تم حفظ السكربت ' + name);
-  const host = (req.headers['x-forwarded-host'] || req.headers.host || 'your-project.vercel.app').split(',')[0];
-  const proto = req.headers['x-forwarded-proto'] || 'https';
-  const url = proto + '://' + host + '/load/' + name;
-  res.json({ success: true, name, url, loadstring: 'loadstring(game:HttpGet("' + url + '"))()' });
+  const url = loadUrl(req, name);
+  res.json({
+    success: true,
+    name,
+    url,
+    loadstring: 'loadstring(game:HttpGet("' + url + '"))()'
+  });
 });
 
-app.get('/load/:name', (req, res) => {
-  const name = slugify(req.params.name);
+app.delete('/api/scripts/:name', (req, res) => {
+  const name = slug(req.params.name);
+  if (!g.scripts[name]) return res.status(404).json({ success: false, error: 'not found' });
+  delete g.scripts[name];
+  save();
+  addLog('script', 'تم حذف السكربت ' + name);
+  res.json({ success: true });
+});
+
+app.get('/script/:name', (req, res) => {
+  const name = slug(req.params.name);
   const s = g.scripts[name];
   res.setHeader('Content-Type', 'text/plain; charset=utf-8');
   res.setHeader('Cache-Control', 'no-store');
-  if (!s || !s.code) return res.status(404).send('-- script not found: ' + name);
-  addLog('load', 'تم سحب السكربت ' + name);
+  if (!s) return res.status(404).send('-- script not found');
+  g.hits = (g.hits || 0) + 1;
+  addLog('load', 'تم تحميل ' + name);
   res.send(s.code);
 });
 
+app.get('/load/:name', (req, res) => {
+  req.url = '/script/' + req.params.name;
+  app._router.handle(req, res);
+});
+
+app.get('/api/logs', (_req, res) => res.json(g.logs || []));
+
 app.post('/api/register', (req, res) => {
-  const robloxId = req.body.robloxId || req.body.userId;
-  if (!robloxId) return res.status(400).json({ success: false, error: 'Missing robloxId' });
-  const id = String(robloxId);
+  const id = String(req.body.robloxId || req.body.userId || '');
+  if (!id) return res.status(400).json({ success: false, error: 'Missing robloxId' });
+  const username = req.body.username || req.body.fromName || 'Unknown';
   const isNew = !g.users[id];
-  g.users[id] = {
-    robloxId: toInt(robloxId),
-    username: req.body.username || req.body.fromName || 'Unknown',
-    jobId: req.body.jobId || '',
-    lastSeen: Date.now(),
-  };
-  if (isNew) addLog('register', (g.users[id].username) + ' دخل');
-  saveStore();
-  res.json({ success: true });
-});
-app.post('/api/heartbeat', (req, res) => {
-  const id = String(req.body.robloxId || '');
-  if (!id) return res.status(400).json({ success: false });
-  if (!g.users[id]) g.users[id] = { robloxId: toInt(id), username: 'Unknown', jobId: '', lastSeen: Date.now() };
-  else g.users[id].lastSeen = Date.now();
-  res.json({ success: true });
-});
-app.post('/api/log', (req, res) => {
-  addLog('client', (req.body.username || 'Player') + ': ' + (req.body.message || JSON.stringify(req.body)));
+  g.users[id] = { robloxId: id, username, jobId: req.body.jobId || '', lastSeen: Date.now() };
+  if (isNew) addLog('register', username + ' دخل من اللعبة');
+  save();
   res.json({ success: true });
 });
 
-app.post('/api/trade/create', (req, res) => {
-  const fromId = req.body.fromId || req.body.userId;
-  const fromName = req.body.fromName || 'Unknown';
-  let myItems = req.body.myItems || [];
-  let theirItems = req.body.theirItems || [];
-  if (!Array.isArray(myItems)) myItems = [];
-  if (!Array.isArray(theirItems)) theirItems = [];
-  if (!fromId || !myItems.length) return res.status(400).json({ success: false, error: 'Missing data' });
-  const id = 'tr_' + Date.now().toString(36);
-  g.trades[id] = { id, fromId: toInt(fromId), fromName, myItems, theirItems, note: req.body.note || '', jobId: req.body.jobId || '', status: 'pending', createdAt: Date.now() };
-  g.totalTrades++;
-  addLog('create', fromName + ' نشر عرضاً');
-  res.json({ success: true, tradeId: id, id });
-});
-app.get('/api/trades/all', (_req, res) => res.json({ success: true, trades: activeTrades() }));
-app.post('/api/trade/:id/delete', (req, res) => {
-  delete g.trades[req.params.id];
+app.post('/api/heartbeat', (req, res) => {
+  const id = String(req.body.robloxId || '');
+  if (!id) return res.status(400).json({ success: false });
+  if (!g.users[id]) g.users[id] = { robloxId: id, username: req.body.username || 'Unknown', lastSeen: Date.now() };
+  else g.users[id].lastSeen = Date.now();
+  save();
   res.json({ success: true });
 });
-app.post('/api/trade/request', (req, res) => {
-  const { tradeId, fromId, fromName, toId, toName, myItems } = req.body;
-  if (!fromId || !toId) return res.status(400).json({ success: false });
-  const id = 'req_' + Date.now().toString(36);
-  g.tradeRequests[id] = { id, tradeId, fromId: toInt(fromId), fromName, toId: toInt(toId), toName, myItems: myItems || [], status: 'pending', createdAt: Date.now() };
-  addLog('trade_request', fromName + ' أرسل طلب إلى ' + toName);
-  res.json({ success: true, requestId: id, id });
-});
-app.get('/api/trade/requests/list/:userId', (req, res) => {
-  const uid = toInt(req.params.userId);
-  res.json(Object.values(g.tradeRequests).filter(r => r.fromId === uid || r.toId === uid));
-});
-app.post('/api/trade/request/accept', (req, res) => {
-  const r = g.tradeRequests[req.body.requestId];
-  if (!r) return res.status(404).json({ success: false });
-  r.status = 'accepted';
-  addLog('accept', r.toName + ' قبل طلب ' + r.fromName);
-  res.json({ success: true });
-});
-app.post('/api/trade/request/reject', (req, res) => {
-  const r = g.tradeRequests[req.body.requestId];
-  if (r) r.status = 'rejected';
-  res.json({ success: true });
-});
-app.get('/api/dm/conversations/:userId', (req, res) => {
-  const uid = toInt(req.params.userId);
-  const out = [];
-  for (const key in g.dmMessages) {
-    const [a,b] = key.split('_').map(Number);
-    if (a !== uid && b !== uid) continue;
-    const other = a === uid ? b : a;
-    const msgs = g.dmMessages[key] || [];
-    const last = msgs[msgs.length-1];
-    out.push({ userId: other, name: last ? (last.fromId === other ? last.fromName : last.toName) : ('Player'+other), lastMsg: last ? last.message : '' });
-  }
-  res.json(out);
-});
-app.get('/api/dm/messages/:a/:b', (req, res) => {
-  res.json({ success: true, messages: g.dmMessages[convKey(req.params.a, req.params.b)] || [] });
-});
-app.post('/api/dm/send', (req, res) => {
-  const { fromId, fromName, toId, toName, message } = req.body;
-  if (!fromId || !toId || !message) return res.status(400).json({ success: false });
-  const key = convKey(fromId, toId);
-  if (!g.dmMessages[key]) g.dmMessages[key] = [];
-  g.dmMessages[key].push({ fromId: toInt(fromId), fromName, toId: toInt(toId), toName, message: String(message), time: Date.now() });
-  addLog('dm', fromName + ' → ' + toName);
+
+app.post('/api/log', (req, res) => {
+  const username = req.body.username || 'Player';
+  const message = req.body.message || JSON.stringify(req.body);
+  addLog('game', username + ': ' + message);
   res.json({ success: true });
 });
 
 const PORT = process.env.PORT || 3000;
-if (require.main === module) app.listen(PORT, () => console.log('host on', PORT));
+if (require.main === module) app.listen(PORT, () => console.log('dashboard on', PORT));
 module.exports = app;
