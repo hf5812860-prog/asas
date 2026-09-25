@@ -1,7 +1,7 @@
 {
-  "name": "roblox-dashboard",
+  "name": "roblox-custom-loader",
   "version": "1.0.0",
-  "description": "Roblox Dashboard with Key System and Data Logging",
+  "description": "Custom Roblox Script Loader with Dashboard",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
