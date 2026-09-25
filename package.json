@@ -1,15 +1,14 @@
 {
-  "name": "roblox-trade-system",
-  "version": "13.0.0",
-  "description": "Roblox Trade System Backend",
+  "name": "asas-soma-trade-api",
+  "version": "9.1.0",
+  "private": true,
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "dev": "node index.js"
   },
   "dependencies": {
-    "express": "^4.18.2"
-  },
-  "engines": {
-    "node": ">=18.0.0"
+    "cors": "^2.8.5",
+    "express": "^4.21.2"
   }
 }
