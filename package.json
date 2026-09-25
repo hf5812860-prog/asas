@@ -1,7 +1,7 @@
 {
-  "name": "roblox-trade-system",
-  "version": "14.0.0",
-  "description": "Roblox Trade System with Key Auth, Dashboard, Auto-Update",
+  "name": "roblox-backend-vercel",
+  "version": "1.0.0",
+  "description": "Backend for Roblox scripts with Key System and Logging",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
