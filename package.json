@@ -1,6 +1,6 @@
 {
-  "name": "roblox-script-host",
-  "version": "1.0.0",
+  "name": "roblox-script-dashboard",
+  "version": "2.0.0",
   "private": true,
   "main": "index.js",
   "engines": { "node": "20.x" },
