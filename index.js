@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════
-// Roblox Dashboard Server v2.0 — كل شيء داخل ملف واحد
+// Roblox Custom Loader v3.0 — Script Hosting + Dashboard
 // ═══════════════════════════════════════════════════════
 const express      = require('express');
 const cookieParser = require('cookie-parser');
@@ -8,24 +8,22 @@ const app          = express();
 // ═══════════════════════════════════════════════════════
 // ⚙️ Middleware
 // ═══════════════════════════════════════════════════════
-app.use(express.json({ limit: '2mb' }));
-app.use(express.urlencoded({ extended: true, limit: '2mb' }));
-app.use(express.text({ type: ['text/*', 'application/json'], limit: '2mb' }));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express.text({ type: ['text/*', 'application/json'], limit: '10mb' }));
 app.use(cookieParser());
 
-// تحويل body نصي إلى JSON
 app.use((req, res, next) => {
-    if (typeof req.body === 'string' && req.body.trim()) {
+    if (typeof req.body === 'string' && req.body.trim() && req.path !== '/api/script/save') {
         try { req.body = JSON.parse(req.body); } catch (e) {}
     }
     if (!req.body || typeof req.body !== 'object') req.body = {};
     next();
 });
 
-// CORS
 app.use((req, res, next) => {
     res.header('Access-Control-Allow-Origin', '*');
-    res.header('Access-Control-Allow-Headers', 'Content-Type, x-api-key, x-admin-key');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, x-admin-token');
     res.header('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
     if (req.method === 'OPTIONS') return res.sendStatus(200);
     next();
@@ -34,35 +32,25 @@ app.use((req, res, next) => {
 // ═══════════════════════════════════════════════════════
 // 🔐 الإعدادات
 // ═══════════════════════════════════════════════════════
-const API_KEY        = process.env.API_KEY        || "JXZXCV";
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admin123";
-const SESSION_SECRET = process.env.SESSION_SECRET || "super-secret-change-me";
+const SESSION_SECRET = process.env.SESSION_SECRET || "session-secret-change-me";
 const START_TIME     = Date.now();
 const ONLINE_TIMEOUT = 2 * 60 * 1000;
 
 // ═══════════════════════════════════════════════════════
 // 🗄️ Database (in-memory)
 // ═══════════════════════════════════════════════════════
-const users     = {};
-const keys      = {};
-const logs      = [];
-const authLog   = [];
-const blacklist = {};
-
-keys["TEST-1234-ABCD-EFGH"] = {
-    created: Date.now(),
-    expires: Date.now() + 365 * 24 * 60 * 60 * 1000,
-    maxUses: 1000,
-    uses: 0,
-    hwid: null,
-    note: "Test Key",
-};
+// scripts: { name: { name, content, updatedAt, loads, description } }
+const scripts   = {};
+const players   = {}; // { robloxId: {...} }
+const logs      = []; // آخر 500 حدث
+const analytics = []; // زيارات الـ loadstring
 
 // ═══════════════════════════════════════════════════════
 // 🛠️ Helpers
 // ═══════════════════════════════════════════════════════
 function isOnline(u) { return u && (Date.now() - u.lastSeen < ONLINE_TIMEOUT); }
-function getOnlineUsers() { return Object.values(users).filter(isOnline); }
+function getOnlineUsers() { return Object.values(players).filter(isOnline); }
 
 function addLog(type, message, data) {
     logs.unshift({ type, message, data: data || null, time: Date.now() });
@@ -70,29 +58,15 @@ function addLog(type, message, data) {
     console.log(`[${type.toUpperCase()}] ${message}`);
 }
 
-function apiAuth(req, res, next) {
-    const key = req.headers['x-api-key'] || req.query.key;
-    if (key !== API_KEY) return res.status(401).json({ success: false, error: 'Invalid API key' });
-    next();
-}
-
 function adminAuth(req, res, next) {
-    const token = req.cookies.admin_token;
+    const token = req.cookies.admin_token || req.headers['x-admin-token'];
     if (!token || token !== SESSION_SECRET) {
+        if (req.headers['x-admin-token']) {
+            return res.status(401).json({ success: false, error: 'Unauthorized' });
+        }
         return res.redirect('/login');
     }
     next();
-}
-
-function generateKey() {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-    const seg = () => Array.from({ length: 4 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
-    return `${seg()}-${seg()}-${seg()}-${seg()}`;
-}
-
-function formatDate(ts) {
-    if (!ts) return '∞';
-    return new Date(ts).toLocaleDateString('ar-EG', { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
 function timeAgo(ts) {
@@ -107,15 +81,19 @@ function esc(s) {
     return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+function validName(name) {
+    return /^[a-zA-Z0-9_\-]{1,64}$/.test(name);
+}
+
 // ═══════════════════════════════════════════════════════
-// 🎨 Layout Helper — القالب الرئيسي
+// 🎨 Layout
 // ═══════════════════════════════════════════════════════
 function layout({ title, page, content }) {
     const navItems = [
-        { href: '/dashboard', icon: '📊', label: 'لوحة التحكم', id: 'dashboard' },
-        { href: '/keys',      icon: '🔑', label: 'المفاتيح',    id: 'keys' },
-        { href: '/users',     icon: '👥', label: 'اللاعبين',    id: 'users' },
-        { href: '/logs',      icon: '📜', label: 'السجلات',     id: 'logs' },
+        { href: '/dashboard',  icon: '📊', label: 'لوحة التحكم',    id: 'dashboard' },
+        { href: '/scripts',    icon: '📜', label: 'السكربتات',      id: 'scripts' },
+        { href: '/players',    icon: '👥', label: 'اللاعبين',       id: 'players' },
+        { href: '/logs',       icon: '📋', label: 'السجلات',        id: 'logs' },
     ];
 
     const navHTML = navItems.map(item => {
@@ -134,11 +112,12 @@ function layout({ title, page, content }) {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>${esc(title)} — Roblox Panel</title>
+<title>${esc(title)} — Roblox Loader</title>
 <script src="https://cdn.tailwindcss.com"></script>
-<link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&family=JetBrains+Mono&display=swap" rel="stylesheet">
 <style>
     * { font-family: 'Cairo', sans-serif; }
+    code, pre, .mono { font-family: 'JetBrains Mono', monospace; }
     body { background: #0a0a12; margin: 0; }
     ::-webkit-scrollbar { width: 8px; height: 8px; }
     ::-webkit-scrollbar-track { background: #1a1a2e; }
@@ -149,6 +128,7 @@ function layout({ title, page, content }) {
     }
     @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.5;transform:scale(1.3)} }
     .glow { box-shadow: 0 0 30px rgba(59,130,246,0.15); }
+    textarea { font-family: 'JetBrains Mono', monospace; }
 </style>
 </head>
 <body class="min-h-screen text-gray-200">
@@ -161,8 +141,8 @@ function layout({ title, page, content }) {
                     <span class="text-2xl">🎮</span>
                 </div>
                 <div>
-                    <div class="font-bold text-white">Roblox Panel</div>
-                    <div class="text-xs text-gray-500">v2.0.0</div>
+                    <div class="font-bold text-white">Custom Loader</div>
+                    <div class="text-xs text-gray-500">v3.0.0</div>
                 </div>
             </div>
         </div>
@@ -184,16 +164,12 @@ function layout({ title, page, content }) {
     </main>
 </div>
 
-<script>
-    // تحديث تلقائي كل 5 ثواني
-    setTimeout(() => location.reload(), 5000);
-</script>
 </body>
 </html>`;
 }
 
 // ═══════════════════════════════════════════════════════
-// 🏠 Login Page
+// 🏠 Login
 // ═══════════════════════════════════════════════════════
 app.get('/login', (req, res) => {
     const err = req.query.error ? `
@@ -215,11 +191,9 @@ app.get('/login', (req, res) => {
 <div class="bg-gray-900/60 backdrop-blur border border-gray-800 rounded-2xl shadow-2xl p-8">
     <div class="text-center mb-8">
         <div class="inline-block p-4 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl mb-4">
-            <svg class="w-12 h-12 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-            </svg>
+            <span class="text-5xl">🎮</span>
         </div>
-        <h1 class="text-3xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">لوحة التحكم</h1>
+        <h1 class="text-3xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">Custom Loader</h1>
         <p class="text-gray-400 mt-2 text-sm">أدخل كلمة مرور الأدمن</p>
     </div>
     ${err}
@@ -256,15 +230,29 @@ app.get('/logout', (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════
-// 🏠 Dashboard Page
+// 🏠 Dashboard
 // ═══════════════════════════════════════════════════════
 app.get('/', (req, res) => res.redirect('/dashboard'));
 
 app.get('/dashboard', adminAuth, (req, res) => {
     const online = getOnlineUsers();
-    const activeKeys = Object.values(keys).filter(k => !k.expires || k.expires > Date.now()).length;
+    const totalLoads = Object.values(scripts).reduce((s, sc) => s + (sc.loads || 0), 0);
     const recentLogs = logs.slice(0, 10);
-    const recentUsers = Object.values(users).sort((a, b) => b.lastSeen - a.lastSeen).slice(0, 5);
+
+    const stats = [
+        { icon: '🟢', num: online.length, lbl: 'متصل الآن', color: 'emerald' },
+        { icon: '👥', num: Object.keys(players).length, lbl: 'إجمالي اللاعبين', color: 'blue' },
+        { icon: '📜', num: Object.keys(scripts).length, lbl: 'السكربتات المنشورة', color: 'purple' },
+        { icon: '⚡', num: totalLoads, lbl: 'إجمالي التحميلات', color: 'orange' },
+    ];
+
+    const statsHTML = stats.map(s => `
+        <div class="bg-gradient-to-br from-${s.color}-500/10 to-${s.color}-500/5 border border-${s.color}-500/20 rounded-2xl p-5 glow">
+            <div class="text-3xl mb-2">${s.icon}</div>
+            <div class="text-3xl font-bold text-${s.color}-400">${s.num}</div>
+            <div class="text-gray-400 text-sm mt-1">${s.lbl}</div>
+        </div>
+    `).join('');
 
     const onlineHTML = online.length === 0
         ? '<div class="text-center py-8 text-gray-500 text-sm">لا أحد متصل</div>'
@@ -279,7 +267,7 @@ app.get('/dashboard', adminAuth, (req, res) => {
             </div>
         `).join('');
 
-    const logIcons = { auth: '🔐', register: '👤', admin: '👑', action: '⚡', error: '❌', key: '🔑' };
+    const logIcons = { load: '⚡', register: '👤', admin: '👑', action: '📌', script_save: '💾' };
     const logsHTML = recentLogs.length === 0
         ? '<div class="text-center py-8 text-gray-500 text-sm">لا توجد أحداث</div>'
         : recentLogs.map(log => `
@@ -292,20 +280,20 @@ app.get('/dashboard', adminAuth, (req, res) => {
             </div>
         `).join('');
 
-    const usersHTML = recentUsers.length === 0
-        ? '<tr><td colspan="4" class="text-center py-8 text-gray-500">لا يوجد لاعبين</td></tr>'
-        : recentUsers.map(u => `
-            <tr class="border-t border-gray-800 hover:bg-gray-800/30">
-                <td class="p-3">
-                    <div class="flex items-center gap-2">
-                        <img src="https://www.roblox.com/headshot-thumbnail/image?userId=${u.robloxId}&width=150&height=150&format=png" class="w-8 h-8 rounded-full">
-                        <span class="text-white">${esc(u.username)}</span>
-                    </div>
-                </td>
-                <td class="p-3 text-gray-400 font-mono text-xs">${u.robloxId}</td>
-                <td class="p-3 text-emerald-400 font-mono text-xs">${esc((u.key || '—').slice(0, 16))}</td>
-                <td class="p-3 text-gray-400 text-xs">${timeAgo(u.lastSeen)}</td>
-            </tr>
+    const scriptsList = Object.values(scripts).sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 5);
+    const scriptsHTML = scriptsList.length === 0
+        ? '<div class="text-center py-8 text-gray-500 text-sm">لا توجد سكربتات — أضف واحد من صفحة السكربتات</div>'
+        : scriptsList.map(s => `
+            <div class="flex items-center justify-between p-3 bg-gray-800/40 rounded-xl border border-gray-800">
+                <div>
+                    <div class="font-bold text-white text-sm">📜 ${esc(s.name)}</div>
+                    <div class="text-xs text-gray-500 mt-1">${esc(s.description || 'بدون وصف')}</div>
+                </div>
+                <div class="text-right">
+                    <div class="text-emerald-400 font-bold">${s.loads || 0}</div>
+                    <div class="text-xs text-gray-500">تحميل</div>
+                </div>
+            </div>
         `).join('');
 
     const content = `
@@ -313,7 +301,7 @@ app.get('/dashboard', adminAuth, (req, res) => {
             <div class="flex items-center justify-between">
                 <div>
                     <h1 class="text-2xl font-bold text-white">📊 لوحة التحكم</h1>
-                    <p class="text-gray-500 text-sm mt-1">مراقبة شاملة للسكربت</p>
+                    <p class="text-gray-500 text-sm mt-1">مراقبة السكربتات واللاعبين</p>
                 </div>
                 <div class="flex items-center gap-2 px-4 py-2 bg-emerald-500/10 border border-emerald-500/30 rounded-xl">
                     <div class="pulse-dot"></div>
@@ -323,28 +311,7 @@ app.get('/dashboard', adminAuth, (req, res) => {
         </header>
 
         <div class="p-6 space-y-6">
-            <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <div class="bg-gradient-to-br from-emerald-500/10 to-emerald-500/5 border border-emerald-500/20 rounded-2xl p-5 glow">
-                    <div class="text-3xl mb-2">🟢</div>
-                    <div class="text-3xl font-bold text-emerald-400">${online.length}</div>
-                    <div class="text-gray-400 text-sm mt-1">متصل الآن</div>
-                </div>
-                <div class="bg-gradient-to-br from-blue-500/10 to-blue-500/5 border border-blue-500/20 rounded-2xl p-5 glow">
-                    <div class="text-3xl mb-2">👥</div>
-                    <div class="text-3xl font-bold text-blue-400">${Object.keys(users).length}</div>
-                    <div class="text-gray-400 text-sm mt-1">إجمالي اللاعبين</div>
-                </div>
-                <div class="bg-gradient-to-br from-purple-500/10 to-purple-500/5 border border-purple-500/20 rounded-2xl p-5 glow">
-                    <div class="text-3xl mb-2">🔑</div>
-                    <div class="text-3xl font-bold text-purple-400">${activeKeys}</div>
-                    <div class="text-gray-400 text-sm mt-1">مفاتيح نشطة</div>
-                </div>
-                <div class="bg-gradient-to-br from-red-500/10 to-red-500/5 border border-red-500/20 rounded-2xl p-5 glow">
-                    <div class="text-3xl mb-2">🚫</div>
-                    <div class="text-3xl font-bold text-red-400">${Object.keys(blacklist).length}</div>
-                    <div class="text-gray-400 text-sm mt-1">محجوبين</div>
-                </div>
-            </div>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4">${statsHTML}</div>
 
             <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div class="bg-gray-900/60 border border-gray-800 rounded-2xl overflow-hidden">
@@ -357,31 +324,19 @@ app.get('/dashboard', adminAuth, (req, res) => {
 
                 <div class="bg-gray-900/60 border border-gray-800 rounded-2xl overflow-hidden">
                     <div class="p-5 border-b border-gray-800 flex items-center justify-between">
-                        <h2 class="font-bold text-white flex items-center gap-2"><span class="text-xl">📜</span> آخر الأحداث</h2>
-                        <a href="/logs" class="text-xs text-blue-400 hover:text-blue-300">عرض الكل →</a>
+                        <h2 class="font-bold text-white flex items-center gap-2"><span class="text-xl">📜</span> أحدث السكربتات</h2>
+                        <a href="/scripts" class="text-xs text-blue-400 hover:text-blue-300">إدارة السكربتات →</a>
                     </div>
-                    <div class="p-4 space-y-2 max-h-72 overflow-auto">${logsHTML}</div>
+                    <div class="p-4 space-y-2 max-h-72 overflow-auto">${scriptsHTML}</div>
                 </div>
             </div>
 
             <div class="bg-gray-900/60 border border-gray-800 rounded-2xl overflow-hidden">
                 <div class="p-5 border-b border-gray-800 flex items-center justify-between">
-                    <h2 class="font-bold text-white flex items-center gap-2"><span class="text-xl">👥</span> أحدث اللاعبين</h2>
-                    <a href="/users" class="text-xs text-blue-400 hover:text-blue-300">عرض الكل →</a>
+                    <h2 class="font-bold text-white flex items-center gap-2"><span class="text-xl">📋</span> آخر الأحداث</h2>
+                    <a href="/logs" class="text-xs text-blue-400 hover:text-blue-300">عرض الكل →</a>
                 </div>
-                <div class="overflow-x-auto">
-                    <table class="w-full text-sm">
-                        <thead class="bg-gray-800/50">
-                            <tr>
-                                <th class="text-right p-3 text-gray-400 font-semibold">اللاعب</th>
-                                <th class="text-right p-3 text-gray-400 font-semibold">Roblox ID</th>
-                                <th class="text-right p-3 text-gray-400 font-semibold">المفتاح</th>
-                                <th class="text-right p-3 text-gray-400 font-semibold">آخر ظهور</th>
-                            </tr>
-                        </thead>
-                        <tbody>${usersHTML}</tbody>
-                    </table>
-                </div>
+                <div class="p-4 space-y-2 max-h-96 overflow-auto">${logsHTML}</div>
             </div>
         </div>
     `;
@@ -390,147 +345,254 @@ app.get('/dashboard', adminAuth, (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════
-// 🔑 Keys Page
+// 📜 Scripts Management Page
 // ═══════════════════════════════════════════════════════
-app.get('/keys', adminAuth, (req, res) => {
-    const keysList = Object.entries(keys).map(([k, v]) => ({ key: k, ...v }));
+app.get('/scripts', adminAuth, (req, res) => {
+    const list = Object.values(scripts).sort((a, b) => b.updatedAt - a.updatedAt);
 
-    const rowsHTML = keysList.length === 0
-        ? '<tr><td colspan="6" class="text-center py-12 text-gray-500">لا توجد مفاتيح بعد</td></tr>'
-        : keysList.map(k => `
-            <tr class="border-t border-gray-800 hover:bg-gray-800/30">
-                <td class="p-4">
+    const scriptsHTML = list.length === 0
+        ? `<div class="text-center py-16">
+             <div class="text-6xl mb-4">📜</div>
+             <div class="text-gray-400 mb-2">لا توجد سكربتات بعد</div>
+             <div class="text-gray-500 text-sm">اضغط "إضافة سكربت" لتبدأ</div>
+           </div>`
+        : list.map(s => {
+            const url = `/load/${s.name}`;
+            return `
+            <div class="bg-gray-900/60 border border-gray-800 rounded-2xl p-5 hover:border-blue-500/50 transition">
+                <div class="flex items-start justify-between mb-4">
+                    <div>
+                        <div class="flex items-center gap-2">
+                            <span class="text-2xl">📜</span>
+                            <h3 class="text-xl font-bold text-white">${esc(s.name)}</h3>
+                        </div>
+                        <p class="text-gray-400 text-sm mt-1">${esc(s.description || 'بدون وصف')}</p>
+                    </div>
+                    <div class="text-right">
+                        <div class="text-2xl font-bold text-emerald-400">${s.loads || 0}</div>
+                        <div class="text-xs text-gray-500">تحميل</div>
+                    </div>
+                </div>
+
+                <div class="bg-gray-950 border border-gray-800 rounded-xl p-3 mb-3">
+                    <div class="text-xs text-gray-500 mb-1">🔗 رابط التحميل:</div>
                     <div class="flex items-center gap-2">
-                        <code class="text-emerald-400 font-mono text-xs bg-emerald-500/10 px-2 py-1 rounded">${esc(k.key)}</code>
-                        <button onclick="navigator.clipboard.writeText('${esc(k.key)}');alert('✅ تم النسخ')" class="text-gray-500 hover:text-white">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
-                            </svg>
+                        <code class="flex-1 text-emerald-400 text-xs overflow-x-auto whitespace-nowrap">loadstring(game:HttpGet("${req.protocol}://${req.get('host')}${url}"))()</code>
+                        <button onclick="copyToClipboard('loadstring(game:HttpGet(\\'${req.protocol}://${req.get('host')}${url}\\'))()')" 
+                                class="px-3 py-1.5 bg-blue-500/20 text-blue-400 rounded-lg hover:bg-blue-500/30 text-xs font-semibold whitespace-nowrap">
+                            📋 نسخ
                         </button>
                     </div>
-                </td>
-                <td class="p-4"><span class="text-white font-semibold">${k.uses || 0}</span> <span class="text-gray-500">/ ${k.maxUses || '∞'}</span></td>
-                <td class="p-4 text-gray-300 text-xs">${formatDate(k.expires)}</td>
-                <td class="p-4 text-gray-500 font-mono text-xs">${k.hwid ? esc(k.hwid.slice(0, 12)) + '...' : '—'}</td>
-                <td class="p-4 text-gray-400 text-xs">${esc(k.note || '—')}</td>
-                <td class="p-4">
-                    <form method="POST" action="/admin/keys/delete" onsubmit="return confirm('حذف المفتاح؟')" class="inline">
-                        <input type="hidden" name="key" value="${esc(k.key)}">
-                        <button type="submit" class="px-3 py-1.5 bg-red-500/20 text-red-400 rounded-lg hover:bg-red-500/30 text-xs font-semibold">🗑️ حذف</button>
+                </div>
+
+                <div class="flex gap-2 text-xs text-gray-500 mb-3">
+                    <span>آخر تحديث: ${timeAgo(s.updatedAt)}</span>
+                    <span>•</span>
+                    <span>الحجم: ${s.content.length} حرف</span>
+                </div>
+
+                <div class="flex gap-2">
+                    <a href="/scripts/edit/${s.name}" class="flex-1 py-2 bg-blue-500/20 text-blue-400 rounded-lg hover:bg-blue-500/30 text-sm font-semibold text-center">
+                        ✏️ تعديل
+                    </a>
+                    <form method="POST" action="/admin/scripts/delete" onsubmit="return confirm('حذف السكربت؟')" class="flex-1">
+                        <input type="hidden" name="name" value="${esc(s.name)}">
+                        <button type="submit" class="w-full py-2 bg-red-500/20 text-red-400 rounded-lg hover:bg-red-500/30 text-sm font-semibold">
+                            🗑️ حذف
+                        </button>
                     </form>
-                </td>
-            </tr>
-        `).join('');
+                    <a href="${url}" target="_blank" class="flex-1 py-2 bg-emerald-500/20 text-emerald-400 rounded-lg hover:bg-emerald-500/30 text-sm font-semibold text-center">
+                        👁️ معاينة
+                    </a>
+                </div>
+            </div>`;
+        }).join('');
 
     const content = `
         <header class="bg-gray-900/60 backdrop-blur border-b border-gray-800 p-6 sticky top-0 z-10">
             <div class="flex items-center justify-between flex-wrap gap-4">
                 <div>
-                    <h1 class="text-2xl font-bold text-white">🔑 إدارة المفاتيح</h1>
-                    <p class="text-gray-500 text-sm mt-1">توليد، عرض وحذف مفاتيح التفعيل</p>
+                    <h1 class="text-2xl font-bold text-white">📜 إدارة السكربتات</h1>
+                    <p class="text-gray-500 text-sm mt-1">أضف، عدّل، واحصل على روابط loadstring مباشرة</p>
                 </div>
-                <button onclick="openModal()" class="px-5 py-2.5 bg-gradient-to-r from-emerald-500 to-emerald-600 text-white font-bold rounded-xl hover:opacity-90 transition shadow-lg shadow-emerald-500/25">
-                    + توليد مفتاح
-                </button>
+                <a href="/scripts/new" class="px-5 py-2.5 bg-gradient-to-r from-emerald-500 to-emerald-600 text-white font-bold rounded-xl hover:opacity-90 transition shadow-lg shadow-emerald-500/25">
+                    + إضافة سكربت
+                </a>
             </div>
         </header>
 
         <div class="p-6">
-            <div class="bg-gray-900/60 border border-gray-800 rounded-2xl overflow-hidden">
-                <div class="overflow-x-auto">
-                    <table class="w-full text-sm">
-                        <thead class="bg-gray-800/50">
-                            <tr>
-                                <th class="text-right p-4 text-gray-400 font-semibold">المفتاح</th>
-                                <th class="text-right p-4 text-gray-400 font-semibold">الاستخدامات</th>
-                                <th class="text-right p-4 text-gray-400 font-semibold">الانتهاء</th>
-                                <th class="text-right p-4 text-gray-400 font-semibold">HWID</th>
-                                <th class="text-right p-4 text-gray-400 font-semibold">ملاحظة</th>
-                                <th class="text-right p-4 text-gray-400 font-semibold">إجراء</th>
-                            </tr>
-                        </thead>
-                        <tbody>${rowsHTML}</tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-
-        <div id="modal" class="fixed inset-0 bg-black/70 backdrop-blur-sm hidden items-center justify-center z-50 p-4">
-            <div class="bg-gray-900 border border-gray-800 rounded-2xl max-w-md w-full p-6">
-                <h2 class="text-xl font-bold text-white mb-4">🔑 توليد مفتاح جديد</h2>
-                <form method="POST" action="/admin/keys/generate" class="space-y-4">
-                    <div>
-                        <label class="block text-gray-300 text-sm mb-2">عدد الاستخدامات</label>
-                        <input type="number" name="maxUses" value="1" min="1"
-                            class="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-xl text-white focus:border-blue-500 focus:outline-none">
-                    </div>
-                    <div>
-                        <label class="block text-gray-300 text-sm mb-2">صلاحية بالأيام</label>
-                        <input type="number" name="days" value="30" min="1"
-                            class="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-xl text-white focus:border-blue-500 focus:outline-none">
-                    </div>
-                    <div>
-                        <label class="block text-gray-300 text-sm mb-2">ملاحظة (اختياري)</label>
-                        <input type="text" name="note" placeholder="مفتاح VIP"
-                            class="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-xl text-white focus:border-blue-500 focus:outline-none">
-                    </div>
-                    <div class="flex gap-3 pt-2">
-                        <button type="submit" class="flex-1 py-3 bg-gradient-to-r from-emerald-500 to-emerald-600 text-white font-bold rounded-xl hover:opacity-90">✅ توليد</button>
-                        <button type="button" onclick="closeModal()" class="flex-1 py-3 bg-gray-800 text-white font-bold rounded-xl hover:bg-gray-700">إلغاء</button>
-                    </div>
-                </form>
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                ${scriptsHTML}
             </div>
         </div>
 
         <script>
-            function openModal() {
-                const m = document.getElementById('modal');
-                m.classList.remove('hidden'); m.classList.add('flex');
-            }
-            function closeModal() {
-                const m = document.getElementById('modal');
-                m.classList.add('hidden'); m.classList.remove('flex');
+            function copyToClipboard(text) {
+                navigator.clipboard.writeText(text).then(() => {
+                    alert('✅ تم النسخ!\\n\\n' + text);
+                });
             }
         </script>
     `;
 
-    res.send(layout({ title: 'المفاتيح', page: 'keys', content }));
+    res.send(layout({ title: 'السكربتات', page: 'scripts', content }));
 });
 
 // ═══════════════════════════════════════════════════════
-// 👥 Users Page
+// 📝 New Script Page
 // ═══════════════════════════════════════════════════════
-app.get('/users', adminAuth, (req, res) => {
-    const usersList = Object.values(users).sort((a, b) => b.lastSeen - a.lastSeen);
+app.get('/scripts/new', adminAuth, (req, res) => {
+    const content = `
+        <header class="bg-gray-900/60 backdrop-blur border-b border-gray-800 p-6 sticky top-0 z-10">
+            <div class="flex items-center justify-between flex-wrap gap-4">
+                <div>
+                    <h1 class="text-2xl font-bold text-white">➕ إضافة سكربت جديد</h1>
+                    <p class="text-gray-500 text-sm mt-1">الصق كود السكربت هنا وراح يكون متاح للتحميل</p>
+                </div>
+                <a href="/scripts" class="px-5 py-2.5 bg-gray-800 text-white font-bold rounded-xl hover:bg-gray-700">
+                    ← رجوع
+                </a>
+            </div>
+        </header>
 
-    const rowsHTML = usersList.length === 0
-        ? '<tr><td colspan="6" class="text-center py-12 text-gray-500">لا يوجد لاعبين مسجلين</td></tr>'
-        : usersList.map(u => `
-            <tr class="border-t border-gray-800 hover:bg-gray-800/30">
-                <td class="p-4">
-                    <div class="flex items-center gap-3">
-                        <img src="https://www.roblox.com/headshot-thumbnail/image?userId=${u.robloxId}&width=150&height=150&format=png"
-                             class="w-10 h-10 rounded-full border-2 border-blue-500">
-                        <span class="text-white font-semibold">${esc(u.username)}</span>
-                    </div>
-                </td>
-                <td class="p-4 text-gray-400 font-mono text-xs">${u.robloxId}</td>
-                <td class="p-4 text-emerald-400 font-mono text-xs">${esc((u.key || '—').slice(0, 16))}</td>
-                <td class="p-4 text-gray-500 font-mono text-xs">${esc((u.hwid || '—').slice(0, 12))}</td>
-                <td class="p-4 text-gray-300 text-xs">${timeAgo(u.lastSeen)}</td>
-                <td class="p-4">
-                    <form method="POST" action="/admin/users/block" onsubmit="return confirm('حجب اللاعب؟')" class="inline">
-                        <input type="hidden" name="robloxId" value="${u.robloxId}">
-                        <button type="submit" class="px-3 py-1.5 bg-red-500/20 text-red-400 rounded-lg hover:bg-red-500/30 text-xs font-semibold">🚫 حجب</button>
-                    </form>
-                </td>
-            </tr>
-        `).join('');
+        <div class="p-6">
+            <form method="POST" action="/admin/scripts/save" class="bg-gray-900/60 border border-gray-800 rounded-2xl p-6 space-y-5">
+                <div>
+                    <label class="block text-gray-300 text-sm font-semibold mb-2">اسم السكربت (بالإنجليزي فقط، بدون مسافات)</label>
+                    <input type="text" name="name" required pattern="[a-zA-Z0-9_\\-]{1,64}"
+                        placeholder="my-cool-script"
+                        class="w-full px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-xl text-white mono focus:border-blue-500 focus:outline-none transition">
+                    <p class="text-xs text-gray-500 mt-1">يُستخدم في رابط التحميل: <code class="text-blue-400">/load/اسم-السكربت</code></p>
+                </div>
+
+                <div>
+                    <label class="block text-gray-300 text-sm font-semibold mb-2">الوصف (اختياري)</label>
+                    <input type="text" name="description" placeholder="مثال: سكربت جمع السيارات تلقائياً"
+                        class="w-full px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-xl text-white focus:border-blue-500 focus:outline-none transition">
+                </div>
+
+                <div>
+                    <label class="block text-gray-300 text-sm font-semibold mb-2">كود السكربت (Luau)</label>
+                    <textarea name="content" required rows="20" 
+                        placeholder="-- اكتب كود السكربت هنا&#10;print('Hello from Roblox!')"
+                        class="w-full px-4 py-3 bg-gray-950 border border-gray-700 rounded-xl text-emerald-400 text-sm focus:border-blue-500 focus:outline-none transition resize-y"></textarea>
+                </div>
+
+                <div class="flex gap-3 pt-2">
+                    <button type="submit" class="flex-1 py-3 bg-gradient-to-r from-emerald-500 to-emerald-600 text-white font-bold rounded-xl hover:opacity-90">
+                        💾 حفظ السكربت
+                    </button>
+                    <a href="/scripts" class="flex-1 py-3 bg-gray-800 text-white font-bold rounded-xl hover:bg-gray-700 text-center">
+                        إلغاء
+                    </a>
+                </div>
+            </form>
+        </div>
+    `;
+
+    res.send(layout({ title: 'سكربت جديد', page: 'scripts', content }));
+});
+
+// ═══════════════════════════════════════════════════════
+// ✏️ Edit Script Page
+// ═══════════════════════════════════════════════════════
+app.get('/scripts/edit/:name', adminAuth, (req, res) => {
+    const s = scripts[req.params.name];
+    if (!s) return res.redirect('/scripts');
 
     const content = `
         <header class="bg-gray-900/60 backdrop-blur border-b border-gray-800 p-6 sticky top-0 z-10">
-            <h1 class="text-2xl font-bold text-white">👥 اللاعبين</h1>
-            <p class="text-gray-500 text-sm mt-1">إدارة جميع اللاعبين المسجلين</p>
+            <div class="flex items-center justify-between flex-wrap gap-4">
+                <div>
+                    <h1 class="text-2xl font-bold text-white">✏️ تعديل: ${esc(s.name)}</h1>
+                    <p class="text-gray-500 text-sm mt-1">آخر تحديث: ${timeAgo(s.updatedAt)}</p>
+                </div>
+                <a href="/scripts" class="px-5 py-2.5 bg-gray-800 text-white font-bold rounded-xl hover:bg-gray-700">
+                    ← رجوع
+                </a>
+            </div>
+        </header>
+
+        <div class="p-6">
+            <form method="POST" action="/admin/scripts/save" class="bg-gray-900/60 border border-gray-800 rounded-2xl p-6 space-y-5">
+                <input type="hidden" name="originalName" value="${esc(s.name)}">
+                
+                <div>
+                    <label class="block text-gray-300 text-sm font-semibold mb-2">اسم السكربت</label>
+                    <input type="text" name="name" required pattern="[a-zA-Z0-9_\\-]{1,64}" value="${esc(s.name)}"
+                        class="w-full px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-xl text-white mono focus:border-blue-500 focus:outline-none transition">
+                </div>
+
+                <div>
+                    <label class="block text-gray-300 text-sm font-semibold mb-2">الوصف</label>
+                    <input type="text" name="description" value="${esc(s.description || '')}"
+                        class="w-full px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-xl text-white focus:border-blue-500 focus:outline-none transition">
+                </div>
+
+                <div>
+                    <label class="block text-gray-300 text-sm font-semibold mb-2">كود السكربت (Luau)</label>
+                    <textarea name="content" required rows="20"
+                        class="w-full px-4 py-3 bg-gray-950 border border-gray-700 rounded-xl text-emerald-400 text-sm focus:border-blue-500 focus:outline-none transition resize-y">${esc(s.content)}</textarea>
+                </div>
+
+                <div class="flex gap-3 pt-2">
+                    <button type="submit" class="flex-1 py-3 bg-gradient-to-r from-emerald-500 to-emerald-600 text-white font-bold rounded-xl hover:opacity-90">
+                        💾 حفظ التعديلات
+                    </button>
+                    <a href="/scripts" class="flex-1 py-3 bg-gray-800 text-white font-bold rounded-xl hover:bg-gray-700 text-center">
+                        إلغاء
+                    </a>
+                </div>
+            </form>
+        </div>
+    `;
+
+    res.send(layout({ title: `تعديل ${s.name}`, page: 'scripts', content }));
+});
+
+// ═══════════════════════════════════════════════════════
+// 👥 Players Page
+// ═══════════════════════════════════════════════════════
+app.get('/players', adminAuth, (req, res) => {
+    const list = Object.values(players).sort((a, b) => b.lastSeen - a.lastSeen);
+
+    const rowsHTML = list.length === 0
+        ? '<tr><td colspan="5" class="text-center py-12 text-gray-500">لا يوجد لاعبين مسجلين</td></tr>'
+        : list.map(p => {
+            const statsStr = p.stats ? Object.entries(p.stats).slice(0, 3).map(([k, v]) => `${k}: ${v}`).join(' • ') : '—';
+            return `
+                <tr class="border-t border-gray-800 hover:bg-gray-800/30">
+                    <td class="p-4">
+                        <div class="flex items-center gap-3">
+                            <img src="https://www.roblox.com/headshot-thumbnail/image?userId=${p.robloxId}&width=150&height=150&format=png"
+                                 class="w-10 h-10 rounded-full border-2 ${isOnline(p) ? 'border-emerald-500' : 'border-gray-700'}" onerror="this.style.display='none'">
+                            <div>
+                                <div class="text-white font-semibold">${esc(p.username)}</div>
+                                <div class="text-xs ${isOnline(p) ? 'text-emerald-400' : 'text-gray-500'}">
+                                    ${isOnline(p) ? '🟢 متصل' : '⚫ غير متصل'}
+                                </div>
+                            </div>
+                        </div>
+                    </td>
+                    <td class="p-4 text-gray-400 mono text-xs">${p.robloxId}</td>
+                    <td class="p-4 text-gray-300 text-xs">${esc(statsStr)}</td>
+                    <td class="p-4 text-gray-300 text-xs">${timeAgo(p.lastSeen)}</td>
+                    <td class="p-4 text-gray-500 text-xs">${p.scriptName ? esc(p.scriptName) : '—'}</td>
+                </tr>`;
+        }).join('');
+
+    const content = `
+        <header class="bg-gray-900/60 backdrop-blur border-b border-gray-800 p-6 sticky top-0 z-10">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h1 class="text-2xl font-bold text-white">👥 اللاعبين</h1>
+                    <p class="text-gray-500 text-sm mt-1">كل اللاعبين اللي شغلوا السكربت</p>
+                </div>
+                <div class="text-sm text-gray-400">
+                    إجمالي: <span class="text-white font-bold">${list.length}</span>
+                </div>
+            </div>
         </header>
 
         <div class="p-6">
@@ -541,10 +603,9 @@ app.get('/users', adminAuth, (req, res) => {
                             <tr>
                                 <th class="text-right p-4 text-gray-400 font-semibold">اللاعب</th>
                                 <th class="text-right p-4 text-gray-400 font-semibold">Roblox ID</th>
-                                <th class="text-right p-4 text-gray-400 font-semibold">المفتاح</th>
-                                <th class="text-right p-4 text-gray-400 font-semibold">HWID</th>
-                                <th class="text-right p-4 text-gray-400 font-semibold">آخر ظهور</th>
-                                <th class="text-right p-4 text-gray-400 font-semibold">إجراء</th>
+                                <th class="text-right p-4 text-gray-400 font-semibold">الإحصائيات</th>
+                                <th class="text-right p-4 text-gray-400 font-semibold">آخر نشاط</th>
+                                <th class="text-right p-4 text-gray-400 font-semibold">السكربت</th>
                             </tr>
                         </thead>
                         <tbody>${rowsHTML}</tbody>
@@ -554,20 +615,21 @@ app.get('/users', adminAuth, (req, res) => {
         </div>
     `;
 
-    res.send(layout({ title: 'اللاعبين', page: 'users', content }));
+    res.send(layout({ title: 'اللاعبين', page: 'players', content }));
 });
 
 // ═══════════════════════════════════════════════════════
-// 📜 Logs Page
+// 📋 Logs Page
 // ═══════════════════════════════════════════════════════
 app.get('/logs', adminAuth, (req, res) => {
-    const logIcons = { auth: '🔐', register: '👤', admin: '👑', action: '⚡', error: '❌', key: '🔑' };
+    const logIcons = { load: '⚡', register: '👤', admin: '👑', action: '📌', script_save: '💾', script_delete: '🗑️' };
     const logColors = {
-        auth: 'border-cyan-500',
-        register: 'border-emerald-500',
+        load: 'border-emerald-500',
+        register: 'border-blue-500',
         admin: 'border-purple-500',
-        action: 'border-blue-500',
-        error: 'border-red-500',
+        action: 'border-cyan-500',
+        script_save: 'border-yellow-500',
+        script_delete: 'border-red-500',
     };
 
     const logsHTML = logs.length === 0
@@ -578,61 +640,31 @@ app.get('/logs', adminAuth, (req, res) => {
                     <span class="text-lg">${logIcons[log.type] || '📌'}</span>
                     <div class="flex-1 min-w-0">
                         <div class="text-sm text-gray-200">${esc(log.message)}</div>
-                        ${log.data ? `<div class="mt-2 text-xs text-gray-500 font-mono bg-gray-800/50 p-2 rounded overflow-auto">${esc(JSON.stringify(log.data).slice(0, 200))}</div>` : ''}
+                        ${log.data ? `<div class="mt-2 text-xs text-gray-500 mono bg-gray-800/50 p-2 rounded overflow-auto">${esc(JSON.stringify(log.data).slice(0, 300))}</div>` : ''}
                         <div class="text-xs text-gray-500 mt-1">${timeAgo(log.time)}</div>
                     </div>
                 </div>
             </div>
         `).join('');
 
-    const authHTML = authLog.length === 0
-        ? '<div class="text-center py-12 text-gray-500">لا توجد محاولات</div>'
-        : authLog.slice(0, 100).map(a => {
-            const colors = {
-                success: 'text-emerald-400 border-emerald-500',
-                invalid: 'text-red-400 border-red-500',
-                expired: 'text-orange-400 border-orange-500',
-                hwid_mismatch: 'text-yellow-400 border-yellow-500',
-                blocked: 'text-red-500 border-red-500',
-                max_uses: 'text-red-400 border-red-500',
-            };
-            const c = colors[a.result] || 'text-gray-400 border-gray-500';
-            return `
-                <div class="p-4 border-b border-gray-800 border-r-4 ${c.split(' ')[1]}">
-                    <div class="flex items-center justify-between">
-                        <span class="font-mono text-xs ${c.split(' ')[0]}">${esc((a.result || '').toUpperCase())}</span>
-                        <span class="text-xs text-gray-500">${timeAgo(a.time)}</span>
-                    </div>
-                    <div class="text-sm text-gray-300 mt-1">
-                        👤 ${esc(a.username || 'Unknown')} <span class="text-gray-500">(${a.robloxId || '?'})</span>
-                    </div>
-                    <div class="text-xs text-gray-500 font-mono mt-1">🔑 ${esc((a.key || 'none').slice(0, 16))}</div>
-                </div>
-            `;
-        }).join('');
-
     const content = `
         <header class="bg-gray-900/60 backdrop-blur border-b border-gray-800 p-6 sticky top-0 z-10">
             <div class="flex items-center justify-between flex-wrap gap-4">
                 <div>
-                    <h1 class="text-2xl font-bold text-white">📜 السجلات</h1>
-                    <p class="text-gray-500 text-sm mt-1">جميع الأحداث الواردة من السكربت</p>
+                    <h1 class="text-2xl font-bold text-white">📋 السجلات</h1>
+                    <p class="text-gray-500 text-sm mt-1">كل الأحداث في مكان واحد</p>
                 </div>
                 <form method="POST" action="/admin/logs/clear" onsubmit="return confirm('مسح كل السجلات؟')">
-                    <button type="submit" class="px-5 py-2.5 bg-red-500/20 text-red-400 font-bold rounded-xl hover:bg-red-500/30">🧹 مسح السجلات</button>
+                    <button type="submit" class="px-5 py-2.5 bg-red-500/20 text-red-400 font-bold rounded-xl hover:bg-red-500/30">
+                        🧹 مسح السجلات
+                    </button>
                 </form>
             </div>
         </header>
 
-        <div class="p-6 grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div class="p-6">
             <div class="bg-gray-900/60 border border-gray-800 rounded-2xl overflow-hidden">
-                <div class="p-5 border-b border-gray-800"><h2 class="font-bold text-white">📌 الأحداث العامة</h2></div>
-                <div class="max-h-[600px] overflow-y-auto">${logsHTML}</div>
-            </div>
-
-            <div class="bg-gray-900/60 border border-gray-800 rounded-2xl overflow-hidden">
-                <div class="p-5 border-b border-gray-800"><h2 class="font-bold text-white">🔐 سجل التحقق</h2></div>
-                <div class="max-h-[600px] overflow-y-auto">${authHTML}</div>
+                <div class="max-h-[700px] overflow-y-auto">${logsHTML}</div>
             </div>
         </div>
     `;
@@ -641,179 +673,181 @@ app.get('/logs', adminAuth, (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════
-// 🔐 Key System API
+// 🚀 LOADSTRING ENDPOINT — جلب كود السكربت
 // ═══════════════════════════════════════════════════════
-app.post('/api/auth/verify', (req, res) => {
-    const { key, hwid, username, robloxId } = req.body;
+app.get('/load/:name', (req, res) => {
+    const name = req.params.name;
+    const s = scripts[name];
 
-    if (robloxId && blacklist[robloxId]) {
-        authLog.unshift({ key, hwid, username, robloxId, result: 'blocked', time: Date.now() });
-        return res.status(403).json({ success: false, error: 'You are blocked' });
+    if (!s) {
+        return res.status(404)
+            .type('text/plain')
+            .send(`warn("[LOADER] ❌ السكربت '${name}' غير موجود")`);
     }
 
-    if (!key || !keys[key]) {
-        authLog.unshift({ key, hwid, username, robloxId, result: 'invalid', time: Date.now() });
-        if (authLog.length > 500) authLog.length = 500;
-        return res.status(401).json({ success: false, error: 'Invalid key' });
-    }
+    // زيادة العداد
+    s.loads = (s.loads || 0) + 1;
+    s.lastLoaded = Date.now();
 
-    const k = keys[key];
+    // تسجيل
+    const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown';
+    analytics.unshift({ name, ip, time: Date.now(), userAgent: req.headers['user-agent'] || '' });
+    if (analytics.length > 1000) analytics.length = 1000;
 
-    if (k.expires && Date.now() > k.expires) {
-        authLog.unshift({ key, hwid, username, robloxId, result: 'expired', time: Date.now() });
-        return res.status(401).json({ success: false, error: 'Key expired' });
-    }
+    addLog('load', `⚡ تم تحميل السكربت "${name}" (إجمالي: ${s.loads})`);
 
-    if (k.hwid && hwid && k.hwid !== hwid) {
-        authLog.unshift({ key, hwid, username, robloxId, result: 'hwid_mismatch', time: Date.now() });
-        return res.status(403).json({ success: false, error: 'Key locked to another device' });
-    }
+    // رأس يدعم Roblox
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Access-Control-Allow-Origin', '*');
 
-    if (k.maxUses && k.uses >= k.maxUses) {
-        authLog.unshift({ key, hwid, username, robloxId, result: 'max_uses', time: Date.now() });
-        return res.status(403).json({ success: false, error: 'Key max uses reached' });
-    }
+    // نضيف تعليق في البداية
+    const header = `-- ═══════════════════════════════════════════
+-- ${s.name}
+-- ${s.description || 'No description'}
+-- Loaded from: ${req.get('host')}
+-- Time: ${new Date().toISOString()}
+-- ═══════════════════════════════════════════\n\n`;
 
-    if (!k.hwid && hwid) k.hwid = hwid;
-    k.uses = (k.uses || 0) + 1;
-    k.lastUsed = Date.now();
-
-    if (robloxId) {
-        users[robloxId] = {
-            robloxId: parseInt(robloxId),
-            username: username || 'Unknown',
-            key,
-            hwid: hwid || '',
-            lastSeen: Date.now(),
-            joinedAt: users[robloxId]?.joinedAt || Date.now(),
-            stats: users[robloxId]?.stats || {},
-        };
-    }
-
-    authLog.unshift({ key, hwid, username, robloxId, result: 'success', time: Date.now() });
-    if (authLog.length > 500) authLog.length = 500;
-
-    addLog('auth', `✅ ${username || 'Unknown'} تحقق بنجاح`);
-
-    res.json({ success: true, message: 'Welcome!', expires: k.expires, uses: k.uses, maxUses: k.maxUses });
+    res.send(header + s.content);
 });
 
 // ═══════════════════════════════════════════════════════
-// 📊 Data Logging API
+// 📊 Logging API — يستقبل بيانات من اللعبة
 // ═══════════════════════════════════════════════════════
-app.post('/api/register', apiAuth, (req, res) => {
-    const { robloxId, username, jobId, key, hwid, stats } = req.body;
-    if (!robloxId) return res.status(400).json({ success: false, error: 'Missing robloxId' });
-    if (blacklist[robloxId]) return res.status(403).json({ success: false, error: 'Blocked' });
+app.post('/api/log', (req, res) => {
+    const { robloxId, username, type, data, scriptName } = req.body;
 
-    const isNew = !users[robloxId];
-    users[robloxId] = {
+    if (!robloxId) {
+        return res.status(400).json({ success: false, error: 'Missing robloxId' });
+    }
+
+    // تحديث/إنشاء اللاعب
+    const isNew = !players[robloxId];
+    players[robloxId] = {
         robloxId: parseInt(robloxId),
         username: username || 'Unknown',
-        jobId: jobId || '',
-        key: key || users[robloxId]?.key || '',
-        hwid: hwid || users[robloxId]?.hwid || '',
         lastSeen: Date.now(),
-        joinedAt: users[robloxId]?.joinedAt || Date.now(),
-        stats: stats || users[robloxId]?.stats || {},
+        joinedAt: players[robloxId]?.joinedAt || Date.now(),
+        stats: players[robloxId]?.stats || {},
+        scriptName: scriptName || players[robloxId]?.scriptName || '',
     };
 
-    if (isNew) addLog('register', `👤 ${username} سجل دخول`);
-    res.json({ success: true, isNew });
+    if (data) {
+        players[robloxId].stats = { ...players[robloxId].stats, ...data };
+    }
+
+    if (isNew) {
+        addLog('register', `👤 ${username || robloxId} شغل السكربت${scriptName ? ` (${scriptName})` : ''}`);
+    } else if (type) {
+        addLog(type, `${username || robloxId} → ${JSON.stringify(data || {}).slice(0, 100)}`, data);
+    }
+
+    res.json({ success: true, received: type || 'heartbeat', serverTime: Date.now() });
 });
 
-app.post('/api/heartbeat', apiAuth, (req, res) => {
-    const { robloxId, stats } = req.body;
-    if (!robloxId) return res.status(400).json({ success: false, error: 'Missing robloxId' });
-    if (blacklist[robloxId]) return res.status(403).json({ success: false, error: 'Blocked' });
+app.post('/api/heartbeat', (req, res) => {
+    const { robloxId, username, stats, scriptName } = req.body;
 
-    if (!users[robloxId]) {
-        users[robloxId] = {
+    if (!robloxId) return res.status(400).json({ success: false, error: 'Missing robloxId' });
+
+    if (!players[robloxId]) {
+        players[robloxId] = {
             robloxId: parseInt(robloxId),
-            username: 'Unknown',
+            username: username || 'Unknown',
             lastSeen: Date.now(),
             joinedAt: Date.now(),
             stats: {},
+            scriptName: scriptName || '',
         };
+        addLog('register', `👤 ${username || robloxId} انضم${scriptName ? ` (${scriptName})` : ''}`);
     } else {
-        users[robloxId].lastSeen = Date.now();
-        if (stats) users[robloxId].stats = { ...users[robloxId].stats, ...stats };
+        players[robloxId].lastSeen = Date.now();
+        if (stats) players[robloxId].stats = { ...players[robloxId].stats, ...stats };
+        if (scriptName) players[robloxId].scriptName = scriptName;
     }
 
     res.json({ success: true, serverTime: Date.now() });
 });
 
-app.post('/api/log', apiAuth, (req, res) => {
-    const { robloxId, username, type, data } = req.body;
-    if (!type) return res.status(400).json({ success: false, error: 'Missing type' });
-
-    if (robloxId && users[robloxId] && data) {
-        users[robloxId].stats = { ...users[robloxId].stats, ...data };
-        users[robloxId].lastSeen = Date.now();
-    }
-
-    addLog(type, `${username || robloxId || '?'} → ${JSON.stringify(data || {}).slice(0, 100)}`, data);
-    res.json({ success: true, received: type });
-});
-
-app.get('/api/stats', apiAuth, (req, res) => {
+// API عام للإحصائيات
+app.get('/api/stats', (req, res) => {
     res.json({
         online: getOnlineUsers().length,
-        totalUsers: Object.keys(users).length,
-        totalKeys: Object.keys(keys).length,
-        activeKeys: Object.values(keys).filter(k => !k.expires || k.expires > Date.now()).length,
-        blocked: Object.keys(blacklist).length,
+        totalPlayers: Object.keys(players).length,
+        totalScripts: Object.keys(scripts).length,
+        totalLoads: Object.values(scripts).reduce((s, sc) => s + (sc.loads || 0), 0),
         uptime: Date.now() - START_TIME,
-        version: "2.0.0",
+        version: "3.0.0",
     });
 });
 
 // ═══════════════════════════════════════════════════════
 // 🎛️ Admin Actions
 // ═══════════════════════════════════════════════════════
-app.post('/admin/keys/generate', adminAuth, (req, res) => {
-    const { maxUses, days, note } = req.body;
-    const key = generateKey();
-    keys[key] = {
-        created: Date.now(),
-        expires: days ? Date.now() + parseInt(days) * 24 * 60 * 60 * 1000 : null,
-        maxUses: parseInt(maxUses) || 1,
-        uses: 0,
-        hwid: null,
-        note: note || '',
-    };
-    addLog('admin', `🔑 مفتاح جديد: ${key}`);
-    res.redirect('/keys');
-});
+app.post('/admin/scripts/save', adminAuth, (req, res) => {
+    const { name, description, content, originalName } = req.body;
 
-app.post('/admin/keys/delete', adminAuth, (req, res) => {
-    const { key } = req.body;
-    if (keys[key]) {
-        delete keys[key];
-        addLog('admin', `🗑️ حذف مفتاح: ${key}`);
+    if (!name || !content) {
+        return res.status(400).send('Missing name or content');
     }
-    res.redirect('/keys');
+
+    if (!validName(name)) {
+        return res.status(400).send('Invalid name — use letters, numbers, _ and - only');
+    }
+
+    // إذا في تغيير اسم، احذف القديم
+    if (originalName && originalName !== name && scripts[originalName]) {
+        delete scripts[originalName];
+    }
+
+    const isNew = !scripts[name];
+    scripts[name] = {
+        name,
+        description: description || '',
+        content,
+        updatedAt: Date.now(),
+        createdAt: scripts[name]?.createdAt || Date.now(),
+        loads: scripts[name]?.loads || 0,
+    };
+
+    addLog('script_save', `${isNew ? '➕' : '✏️'} ${isNew ? 'إضافة' : 'تعديل'} السكربت "${name}"`);
+
+    res.redirect('/scripts');
 });
 
-app.post('/admin/users/block', adminAuth, (req, res) => {
-    const { robloxId } = req.body;
-    blacklist[robloxId] = Date.now();
-    if (users[robloxId]) delete users[robloxId];
-    addLog('admin', `🚫 حجب: ${robloxId}`);
-    res.redirect('/users');
-});
-
-app.post('/admin/users/unblock', adminAuth, (req, res) => {
-    const { robloxId } = req.body;
-    delete blacklist[robloxId];
-    addLog('admin', `✅ فك حجب: ${robloxId}`);
-    res.redirect('/users');
+app.post('/admin/scripts/delete', adminAuth, (req, res) => {
+    const { name } = req.body;
+    if (scripts[name]) {
+        delete scripts[name];
+        addLog('script_delete', `🗑️ حذف السكربت "${name}"`);
+    }
+    res.redirect('/scripts');
 });
 
 app.post('/admin/logs/clear', adminAuth, (req, res) => {
     logs.length = 0;
     addLog('admin', '🧹 تم مسح السجلات');
     res.redirect('/logs');
+});
+
+// API لإضافة سكربت من الخارج (JSON)
+app.post('/api/scripts/save', adminAuth, (req, res) => {
+    const { name, description, content } = req.body;
+    if (!name || !content) return res.status(400).json({ success: false, error: 'Missing name or content' });
+    if (!validName(name)) return res.status(400).json({ success: false, error: 'Invalid name' });
+
+    scripts[name] = {
+        name,
+        description: description || '',
+        content,
+        updatedAt: Date.now(),
+        createdAt: scripts[name]?.createdAt || Date.now(),
+        loads: scripts[name]?.loads || 0,
+    };
+
+    addLog('script_save', `💾 API: حفظ السكربت "${name}"`);
+    res.json({ success: true, name, url: `/load/${name}` });
 });
 
 // ═══════════════════════════════════════════════════════
@@ -825,12 +859,10 @@ if (require.main === module) {
     app.listen(PORT, () => {
         console.log('');
         console.log('╔══════════════════════════════════════════════╗');
-        console.log('║  🎨 Roblox Dashboard v2.0                    ║');
+        console.log('║  🎮 Roblox Custom Loader v3.0                ║');
         console.log('╠══════════════════════════════════════════════╣');
         console.log(`║  🌐 URL: http://localhost:${PORT}/dashboard`);
-        console.log(`║  🔑 API Key:      ${API_KEY}`);
-        console.log(`║  👑 Admin Pass:   ${ADMIN_PASSWORD}`);
-        console.log(`║  🎁 Test Key:     TEST-1234-ABCD-EFGH`);
+        console.log(`║  👑 Admin Pass: ${ADMIN_PASSWORD}`);
         console.log('╚══════════════════════════════════════════════╝');
         console.log('');
     });
