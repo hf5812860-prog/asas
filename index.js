@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════
-// Roblox Trade System v10.2 — Backend
+// Roblox Trade System v11.0 — Backend
 // Trade + Requests + DM
 // ═══════════════════════════════════════════════════════
 const express = require('express');
@@ -11,15 +11,9 @@ app.use(express.text({ type: ['text/*', 'application/json'], limit: '2mb' }));
 
 app.use((req, res, next) => {
     if (typeof req.body === 'string' && req.body.trim()) {
-        try {
-            req.body = JSON.parse(req.body);
-        } catch (e) {
-            // keep as string
-        }
+        try { req.body = JSON.parse(req.body); } catch (e) {}
     }
-    if (!req.body || typeof req.body !== 'object') {
-        req.body = {};
-    }
+    if (!req.body || typeof req.body !== 'object') req.body = {};
     next();
 });
 
@@ -82,7 +76,7 @@ app.get('/', (req, res) => {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Roblox Trade System v10.2</title>
+<title>Roblox Trade System v11.0</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{--bg:#0f0f16;--bg-2:#16161f;--bg-3:#1e1e2b;--border:#2a2a3e;--text:#e4e4ed;--text-dim:#8888a0;--blue:#6ba8ff;--green:#4dc47e;--orange:#ffb84d;--red:#ff6b6b;--purple:#a78bfa;--cyan:#4dd4dd}
@@ -142,7 +136,7 @@ body{font-family:'Segoe UI',Tahoma,sans-serif;background:var(--bg);color:var(--t
 <body>
 <div class="container">
     <div class="header">
-        <h1>🔄 Roblox Trade System v10.2</h1>
+        <h1>🔄 Roblox Trade System v11.0</h1>
         <div style="display:flex;align-items:center;gap:15px;font-size:13px;color:var(--text-dim)">
             <div class="status-badge"><div class="pulse"></div><span>متصل</span></div>
             <span>⏱️ <span id="uptime">0s</span></span>
@@ -176,7 +170,7 @@ body{font-family:'Segoe UI',Tahoma,sans-serif;background:var(--bg);color:var(--t
         <div class="panel-header"><h2>📜 آخر الأحداث</h2></div>
         <div class="panel-body" id="logs-list" style="max-height:350px"><div class="empty">لا توجد أحداث</div></div>
     </div>
-    <div class="footer">v10.2 • التحديث كل 3 ثواني</div>
+    <div class="footer">v11.0 • التحديث كل 3 ثواني</div>
 </div>
 <script>
 const API_KEY = "${API_KEY}";
@@ -262,6 +256,9 @@ app.get('/dashboard/online', auth, (req, res) => {
 });
 app.get('/dashboard/logs', auth, (req, res) => res.json(logs));
 
+// ═══════════════════════════════════════════════════════
+// 📝 REGISTER + HEARTBEAT
+// ═══════════════════════════════════════════════════════
 app.post('/api/register', auth, (req, res) => {
     const { robloxId, username, jobId } = req.body;
     if (!robloxId) return res.status(400).json({ error: 'Missing robloxId' });
@@ -288,10 +285,12 @@ app.post('/api/heartbeat', auth, (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════
-// 📤 CREATE TRADE — يرجّع العرض كامل عشان يظهر فوراً
+// 📤 CREATE TRADE — إرسال مباشر + عرض فوري
 // ═══════════════════════════════════════════════════════
 app.post('/api/trade/create', auth, (req, res) => {
-    console.log('[CREATE] body=', JSON.stringify(req.body));
+    console.log('[CREATE] === طلب جديد وصل ===');
+    console.log('[CREATE] body:', JSON.stringify(req.body));
+
     const fromId   = req.body.fromId   || req.body.FromId || req.body.userId;
     const fromName = req.body.fromName || req.body.username || 'Unknown';
     let myItems     = req.body.myItems     || req.body.items || [];
@@ -309,8 +308,8 @@ app.post('/api/trade/create', auth, (req, res) => {
     if (!Array.isArray(theirItems)) theirItems = [];
 
     if (!fromId) {
-        console.log('[CREATE] missing fromId');
-        return res.status(400).json({ error: 'Missing fromId' });
+        console.log('[CREATE] ❌ missing fromId');
+        return res.status(400).json({ error: 'Missing fromId', received: req.body });
     }
 
     const id = 'tr_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
@@ -328,12 +327,16 @@ app.post('/api/trade/create', auth, (req, res) => {
         createdAt: now,
         expiresAt: now + TRADE_EXPIRE_MS,
     };
+
     totalTrades++;
     addLog('create', `${fromName} نشر عرضاً (${id})`);
-    console.log('[CREATE] saved', id, 'total=', Object.keys(trades).length);
+    console.log('[CREATE] ✅ محفوظ:', id, '| إجمالي:', Object.keys(trades).length);
 
-    // ✅ نرجّع العرض كامل عشان الكلاينت يقدر يعرضه فوراً
-    res.json({ success: true, tradeId: id, trade: trades[id] });
+    res.status(200).json({
+        success: true,
+        tradeId: id,
+        trade: trades[id],
+    });
 });
 
 app.get('/api/trades/all', auth, (req, res) => {
@@ -351,6 +354,9 @@ app.post('/api/trade/:id/delete', auth, (req, res) => {
     res.json({ success: true });
 });
 
+// ═══════════════════════════════════════════════════════
+// 📨 TRADE REQUESTS
+// ═══════════════════════════════════════════════════════
 app.post('/api/trade/request', auth, (req, res) => {
     const { tradeId, fromId, fromName, toId, toName, myItems } = req.body;
     if (!fromId || !toId) return res.status(400).json({ error: 'Missing data' });
@@ -427,6 +433,9 @@ app.post('/api/trade/cancel', auth, (req, res) => {
     res.json({ success: true });
 });
 
+// ═══════════════════════════════════════════════════════
+// 💬 DM
+// ═══════════════════════════════════════════════════════
 app.get('/api/dm/conversations/:userId', auth, (req, res) => {
     const uid = parseInt(req.params.userId);
     const result = [];
@@ -508,7 +517,7 @@ setInterval(() => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log('');
-    console.log('Roblox Trade System v10.2');
+    console.log('Roblox Trade System v11.0');
     console.log('Port:', PORT);
     console.log('Key:', API_KEY);
     console.log('');
