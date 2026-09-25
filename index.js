@@ -47,8 +47,9 @@ function activeTrades() {
 function toInt(v) { const n = parseInt(v, 10); return Number.isFinite(n) ? n : 0; }
 function ensureConv(a, b) { const k = convKey(a, b); if (!dmMessages[k]) dmMessages[k] = []; return k; }
 
-app.get('/', (_req, res) => {
-  res.send(`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>Trade System v12.1</title>
+function sendDash(_req, res) {
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.status(200).send(`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><title>Trade System v12.1</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:Segoe UI,Tahoma,sans-serif;background:#0f0f16;color:#e4e4ed;padding:20px}
@@ -96,7 +97,11 @@ async function refresh(){
 }
 refresh(); setInterval(refresh,3000);
 </script></body></html>`);
-});
+}
+app.get('/', sendDash);
+app.get('/dashboard', sendDash);
+app.get('/index.html', sendDash);
+app.get('/health', (_req, res) => res.json({ ok: true, dashboard: true }));
 
 app.get('/dashboard/stats', auth, (_req, res) => {
   res.json({ success:true, online:getOnlineUsers().length, users:Object.keys(users).length, trades:activeTrades().length, requests:Object.values(tradeRequests).filter(r=>r.status==='pending').length, conversations:Object.keys(dmMessages).length, totalTrades:g.totalTrades, uptime:Date.now()-START_TIME });
