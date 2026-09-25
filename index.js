@@ -373,4 +373,169 @@ setInterval(()=>loadMessages(false), 2000);
 // ═══════════════════════════════════════════════════════
 app.get('/dashboard/stats', auth, (req, res) => {
     res.json({
-        online:      getOnlineUsers().length
+        online:      getOnlineUsers().length,
+        users:       Object.keys(users).length,
+        trades:      Object.values(trades).filter(t => t.status === 'pending').length,
+        totalTrades: totalTrades,
+        uptime:      Date.now() - START_TIME,
+    });
+});
+
+app.get('/dashboard/online', auth, (req, res) => {
+    res.json(getOnlineUsers().sort((a,b) => b.lastSeen - a.lastSeen));
+});
+
+app.get('/dashboard/logs', auth, (req, res) => res.json(logs));
+
+// ═══════════════════════════════════════════════════════
+// 💬 Chat APIs (بدون auth للـ frontend)
+// ═══════════════════════════════════════════════════════
+app.get('/chat/messages', (req, res) => {
+    const recent = chats.slice(-100);
+    res.json({
+        messages: recent,
+        online: getOnlineUsers().length,
+    });
+});
+
+app.post('/chat/send', (req, res) => {
+    const { username, message } = req.body;
+    if(!username || !message) return res.status(400).json({error:'Missing data'});
+    if(message.length > 200) return res.status(400).json({error:'Too long'});
+
+    // ابحث عن userId من users
+    let userId = 1;
+    for(const id in users){
+        if(users[id].username === username){ userId = users[id].robloxId; break; }
+    }
+
+    chats.push({
+        id: 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2,6),
+        userId,
+        username,
+        message: message.trim(),
+        time: Date.now(),
+    });
+
+    if(chats.length > 200) chats.splice(0, chats.length - 200);
+    res.json({success: true});
+});
+
+// ═══════════════════════════════════════════════════════
+// 📝 Trade APIs
+// ═══════════════════════════════════════════════════════
+app.post('/api/register', auth, (req, res) => {
+    const { robloxId, username, jobId } = req.body;
+    if(!robloxId) return res.status(400).json({error:'Missing robloxId'});
+
+    const isNew = !users[robloxId];
+    users[robloxId] = {
+        robloxId,
+        username,
+        jobId,
+        lastSeen: Date.now(),
+    };
+
+    if(isNew) addLog('register', `${username} سجّل دخول`);
+    res.json({success: true});
+});
+
+// 💓 Heartbeat — يخلي اللاعب "متصل"
+app.post('/api/heartbeat', auth, (req, res) => {
+    const { robloxId } = req.body;
+    if(!robloxId) return res.status(400).json({error:'Missing robloxId'});
+
+    if(!users[robloxId]){
+        users[robloxId] = { robloxId, username: 'Unknown', jobId: '', lastSeen: Date.now() };
+    } else {
+        users[robloxId].lastSeen = Date.now();
+    }
+    res.json({success: true});
+});
+
+// 🚪 عند الخروج
+app.post('/api/logout', auth, (req, res) => {
+    const { robloxId } = req.body;
+    if(users[robloxId]) users[robloxId].lastSeen = 0;
+    res.json({success: true});
+});
+
+app.post('/api/trade/create', auth, (req, res) => {
+    const { fromId, fromName, myItems, theirItems, note, jobId } = req.body;
+    if(!fromId) return res.status(400).json({error:'Missing fromId'});
+
+    const id = 'tr_' + Date.now().toString(36) + Math.random().toString(36).slice(2,6);
+    trades[id] = {
+        id, fromId, fromName,
+        myItems: Array.isArray(myItems) ? myItems : [],
+        theirItems: Array.isArray(theirItems) ? theirItems : [],
+        note: note || "",
+        jobId: jobId || "",
+        status: 'pending',
+        createdAt: Date.now(),
+    };
+    totalTrades++;
+
+    addLog('create', `${fromName} نشر عرضاً: يعطي [${(myItems||[]).join(', ')}]`);
+    res.json({success: true, tradeId: id});
+});
+
+app.get('/api/trades/all', auth, (req, res) => {
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+    const list = Object.values(trades).filter(t => t.status === 'pending' && t.createdAt > cutoff);
+    list.sort((a,b) => b.createdAt - a.createdAt);
+    res.json(list);
+});
+
+app.post('/api/trade/:id/delete', auth, (req, res) => {
+    const trade = trades[req.params.id];
+    if(!trade) return res.status(404).json({error:'Not found'});
+    if(trade.fromId != req.body.fromId) return res.status(403).json({error:'Not yours'});
+    addLog('delete', `${trade.fromName} حذف عرضه`);
+    delete trades[req.params.id];
+    res.json({success: true});
+});
+
+app.post('/api/trade/:id/respond', auth, (req, res) => {
+    const { accept, responderId } = req.body;
+    const trade = trades[req.params.id];
+    if(!trade) return res.status(404).json({error:'Not found'});
+    if(trade.fromId == responderId) return res.status(403).json({error:'Own trade'});
+
+    trade.status = accept ? 'accepted' : 'rejected';
+    trade.respondedAt = Date.now();
+    trade.responderId = responderId;
+    addLog(accept ? 'accept' : 'reject', `تم ${accept ? 'قبول' : 'رفض'} عرض ${trade.fromName}`);
+    res.json({success: true, trade});
+});
+
+// ═══════════════════════════════════════════════════════
+// 🧹 تنظيف
+// ═══════════════════════════════════════════════════════
+setInterval(() => {
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+    for(const id in trades){
+        if(trades[id].createdAt < cutoff) delete trades[id];
+    }
+    // احذف المستخدمين القدامى (أكثر من ساعة)
+    for(const id in users){
+        if(Date.now() - users[id].lastSeen > 60 * 60 * 1000 && !isOnline(users[id])){
+            delete users[id];
+        }
+    }
+}, 60 * 1000);
+
+// ═══════════════════════════════════════════════════════
+// 🚀 تشغيل
+// ═══════════════════════════════════════════════════════
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+    console.log('');
+    console.log('╔══════════════════════════════════════════╗');
+    console.log('║  🚀 Roblox Trade System v2.0             ║');
+    console.log('╠══════════════════════════════════════════╣');
+    console.log(`║  🌐 Port: ${PORT}                            ║`);
+    console.log(`║  🔑 Key: ${API_KEY}`);
+    console.log('║  💬 Chat: /chat                           ║');
+    console.log('╚══════════════════════════════════════════╝');
+});
