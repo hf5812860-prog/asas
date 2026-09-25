@@ -1,8 +1,7 @@
 {
   "name": "roblox-trade-api",
-  "version": "1.0.0",
-  "description": "Cross-server trading backend for Roblox",
-  "private": true,
+  "version": "2.0.0",
+  "description": "Cross-server trading + chat for Roblox",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
