@@ -1,6 +1,5 @@
 // ═══════════════════════════════════════════════════════
-// Roblox Trade System v12.0 — Backend نهائي
-// Trade + Requests + DM + Chat عام
+// Roblox Trade System v13.0 — Backend
 // ═══════════════════════════════════════════════════════
 const express = require('express');
 const app = express();
@@ -76,7 +75,7 @@ app.get('/', (req, res) => {
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<title>Roblox Trade System v12.0</title>
+<title>Roblox Trade System v13.0</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{--bg:#0f0f16;--bg-2:#16161f;--bg-3:#1e1e2b;--border:#2a2a3e;--text:#e4e4ed;--text-dim:#8888a0;--blue:#6ba8ff;--green:#4dc47e;--orange:#ffb84d;--red:#ff6b6b;--purple:#a78bfa;--cyan:#4dd4dd}
@@ -84,9 +83,6 @@ body{font-family:'Segoe UI',Tahoma,sans-serif;background:var(--bg);color:var(--t
 .container{max-width:1400px;margin:0 auto}
 .header{background:linear-gradient(135deg,#1e1e2b,#252535);border:1px solid var(--border);border-radius:16px;padding:20px 25px;display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:15px}
 .header h1{font-size:24px;background:linear-gradient(90deg,#6ba8ff,#a78bfa);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
-.nav{display:flex;gap:10px}
-.nav a{padding:10px 20px;background:var(--bg-3);border:1px solid var(--border);border-radius:10px;color:var(--text);text-decoration:none;font-size:13px;font-weight:600}
-.nav a:hover,.nav a.active{background:linear-gradient(135deg,#6ba8ff,#a78bfa);border-color:transparent;color:#fff}
 .status-badge{display:flex;align-items:center;gap:8px;background:rgba(77,196,126,.1);padding:6px 14px;border-radius:20px;border:1px solid rgba(77,196,126,.3);color:var(--green);font-weight:600;font-size:13px}
 .pulse{width:8px;height:8px;background:var(--green);border-radius:50%;animation:pulse 1.5s infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5;transform:scale(1.3)}}
@@ -140,11 +136,7 @@ body{font-family:'Segoe UI',Tahoma,sans-serif;background:var(--bg);color:var(--t
 <body>
 <div class="container">
     <div class="header">
-        <h1>🔄 Roblox Trade System v12.0</h1>
-        <div class="nav">
-            <a href="/" class="active">📊 Dashboard</a>
-            <a href="/chat">💬 Chat</a>
-        </div>
+        <h1>🔄 Roblox Trade System v13.0</h1>
         <div style="display:flex;align-items:center;gap:15px;font-size:13px;color:var(--text-dim)">
             <div class="status-badge"><div class="pulse"></div><span>متصل</span></div>
             <span>⏱️ <span id="uptime">0s</span></span>
@@ -178,7 +170,7 @@ body{font-family:'Segoe UI',Tahoma,sans-serif;background:var(--bg);color:var(--t
         <div class="panel-header"><h2>📜 آخر الأحداث</h2></div>
         <div class="panel-body" id="logs-list" style="max-height:350px"><div class="empty">لا توجد أحداث</div></div>
     </div>
-    <div class="footer">v12.0 • التحديث كل 3 ثواني</div>
+    <div class="footer">v13.0 • التحديث كل 3 ثواني</div>
 </div>
 <script>
 const API_KEY = "${API_KEY}";
@@ -294,7 +286,7 @@ app.post('/api/heartbeat', auth, (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════
-// 📤 CREATE TRADE — الحفظ الفوري
+// 📤 CREATE TRADE
 // ═══════════════════════════════════════════════════════
 app.post('/api/trade/create', auth, (req, res) => {
     console.log('[CREATE] ═══════════════════════════');
@@ -318,7 +310,7 @@ app.post('/api/trade/create', auth, (req, res) => {
 
     if (!fromId) {
         console.log('[CREATE] ❌ Missing fromId');
-        return res.status(400).json({ error: 'Missing fromId', received: req.body });
+        return res.status(400).json({ error: 'Missing fromId' });
     }
 
     const id = 'tr_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
@@ -339,7 +331,7 @@ app.post('/api/trade/create', auth, (req, res) => {
 
     totalTrades++;
     addLog('create', `${fromName} نشر عرضاً`);
-    console.log('[CREATE] ✅ محفوظ:', id, '| إجمالي العروض:', Object.keys(trades).length);
+    console.log('[CREATE] ✅ محفوظ:', id, '| إجمالي:', Object.keys(trades).length);
     console.log('[CREATE] ═══════════════════════════');
 
     res.status(200).json({
@@ -351,7 +343,6 @@ app.post('/api/trade/create', auth, (req, res) => {
 
 app.get('/api/trades/all', auth, (req, res) => {
     const list = activeTrades();
-    console.log('[TRADES] طلب العروض — يرجّع', list.length, 'عرض');
     res.json(list);
 });
 
@@ -513,7 +504,7 @@ app.post('/api/dm/send', auth, (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════
-// 💭 CHAT عام (للتوافق مع v9)
+// 💭 CHAT عام
 // ═══════════════════════════════════════════════════════
 app.get('/chat/messages', (req, res) => {
     res.json({
@@ -539,7 +530,7 @@ app.post('/chat/send', (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════
-// 🧹 تنظيف تلقائي
+// 🧹 تنظيف
 // ═══════════════════════════════════════════════════════
 setInterval(() => {
     const now = Date.now();
@@ -560,11 +551,10 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log('');
     console.log('╔══════════════════════════════════════════╗');
-    console.log('║  🚀 Roblox Trade System v12.0            ║');
+    console.log('║  🚀 Roblox Trade System v13.0            ║');
     console.log('╠══════════════════════════════════════════╣');
     console.log(`║  🌐 Port: ${PORT}`);
     console.log(`║  🔑 Key: ${API_KEY}`);
-    console.log('║  💬 Chat + DM + Trade Requests           ║');
     console.log('╚══════════════════════════════════════════╝');
     console.log('');
 });
