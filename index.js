@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════
-// Roblox Trade System v10.1 — Backend
+// Roblox Trade System v10.2 — Backend
 // Trade + Requests + DM
 // ═══════════════════════════════════════════════════════
 const express = require('express');
@@ -82,7 +82,7 @@ app.get('/', (req, res) => {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Roblox Trade System v10.1</title>
+<title>Roblox Trade System v10.2</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{--bg:#0f0f16;--bg-2:#16161f;--bg-3:#1e1e2b;--border:#2a2a3e;--text:#e4e4ed;--text-dim:#8888a0;--blue:#6ba8ff;--green:#4dc47e;--orange:#ffb84d;--red:#ff6b6b;--purple:#a78bfa;--cyan:#4dd4dd}
@@ -142,7 +142,7 @@ body{font-family:'Segoe UI',Tahoma,sans-serif;background:var(--bg);color:var(--t
 <body>
 <div class="container">
     <div class="header">
-        <h1>🔄 Roblox Trade System v10.1</h1>
+        <h1>🔄 Roblox Trade System v10.2</h1>
         <div style="display:flex;align-items:center;gap:15px;font-size:13px;color:var(--text-dim)">
             <div class="status-badge"><div class="pulse"></div><span>متصل</span></div>
             <span>⏱️ <span id="uptime">0s</span></span>
@@ -176,7 +176,7 @@ body{font-family:'Segoe UI',Tahoma,sans-serif;background:var(--bg);color:var(--t
         <div class="panel-header"><h2>📜 آخر الأحداث</h2></div>
         <div class="panel-body" id="logs-list" style="max-height:350px"><div class="empty">لا توجد أحداث</div></div>
     </div>
-    <div class="footer">v10.1 • التحديث كل 3 ثواني</div>
+    <div class="footer">v10.2 • التحديث كل 3 ثواني</div>
 </div>
 <script>
 const API_KEY = "${API_KEY}";
@@ -287,13 +287,16 @@ app.post('/api/heartbeat', auth, (req, res) => {
     res.json({ success: true });
 });
 
+// ═══════════════════════════════════════════════════════
+// 📤 CREATE TRADE — يرجّع العرض كامل عشان يظهر فوراً
+// ═══════════════════════════════════════════════════════
 app.post('/api/trade/create', auth, (req, res) => {
     console.log('[CREATE] body=', JSON.stringify(req.body));
-    const fromId = req.body.fromId || req.body.FromId || req.body.userId;
+    const fromId   = req.body.fromId   || req.body.FromId || req.body.userId;
     const fromName = req.body.fromName || req.body.username || 'Unknown';
-    let myItems = req.body.myItems || req.body.items || [];
-    let theirItems = req.body.theirItems || req.body.want || [];
-    const note = req.body.note || '';
+    let myItems     = req.body.myItems     || req.body.items || [];
+    let theirItems  = req.body.theirItems  || req.body.want  || [];
+    const note  = req.body.note  || '';
     const jobId = req.body.jobId || '';
 
     if (typeof myItems === 'string') {
@@ -302,15 +305,17 @@ app.post('/api/trade/create', auth, (req, res) => {
     if (typeof theirItems === 'string') {
         try { theirItems = JSON.parse(theirItems); } catch (e) { theirItems = [theirItems]; }
     }
-    if (!Array.isArray(myItems)) myItems = [];
+    if (!Array.isArray(myItems))    myItems = [];
     if (!Array.isArray(theirItems)) theirItems = [];
 
     if (!fromId) {
         console.log('[CREATE] missing fromId');
-        return res.status(400).json({ error: 'Missing fromId', received: req.body });
+        return res.status(400).json({ error: 'Missing fromId' });
     }
 
     const id = 'tr_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    const now = Date.now();
+
     trades[id] = {
         id,
         fromId: parseInt(fromId),
@@ -320,13 +325,15 @@ app.post('/api/trade/create', auth, (req, res) => {
         note,
         jobId,
         status: 'pending',
-        createdAt: Date.now(),
-        expiresAt: Date.now() + TRADE_EXPIRE_MS,
+        createdAt: now,
+        expiresAt: now + TRADE_EXPIRE_MS,
     };
     totalTrades++;
     addLog('create', `${fromName} نشر عرضاً (${id})`);
     console.log('[CREATE] saved', id, 'total=', Object.keys(trades).length);
-    res.json({ success: true, tradeId: id });
+
+    // ✅ نرجّع العرض كامل عشان الكلاينت يقدر يعرضه فوراً
+    res.json({ success: true, tradeId: id, trade: trades[id] });
 });
 
 app.get('/api/trades/all', auth, (req, res) => {
@@ -501,7 +508,7 @@ setInterval(() => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log('');
-    console.log('Roblox Trade System v10.1');
+    console.log('Roblox Trade System v10.2');
     console.log('Port:', PORT);
     console.log('Key:', API_KEY);
     console.log('');
