@@ -1,17 +1,12 @@
 {
-  "name": "asas-soma-trade-api",
-  "version": "12.1.0",
-  "private": true,
+  "name": "roblox-trade-api",
+  "version": "3.0.0",
   "main": "index.js",
-  "engines": {
-    "node": "20.x"
-  },
   "scripts": {
-    "start": "node index.js",
-    "dev": "node index.js"
+    "start": "node index.js"
   },
   "dependencies": {
-    "cors": "^2.8.5",
-    "express": "^4.21.2"
+    "express": "^4.21.2",
+    "cors": "^2.8.5"
   }
 }
