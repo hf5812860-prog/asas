@@ -1,20 +1,11 @@
 {
   "name": "roblox-script-host",
   "version": "6.0.0",
-  "description": "Roblox Script Host — Clean Edition (no trade system)",
+  "description": "Roblox Script Host — Clean Edition",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "node server.js"
+    "start": "node server.js"
   },
-  "keywords": [
-    "roblox",
-    "script-host",
-    "loadstring",
-    "express"
-  ],
-  "author": "",
-  "license": "MIT",
   "engines": {
     "node": ">=18.0.0"
   },
