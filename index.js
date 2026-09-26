@@ -234,6 +234,26 @@ app.get("/dashboard", adminAuth, (req, res) => {
   );
 });
 
+app.get("/online", (req, res) => {
+  const now = Date.now();
+  const list = Object.values(players).map((p) => ({
+    username: p.username,
+    userId: p.userId,
+    money: p.money,
+    bank: p.bank,
+    level: p.level,
+    farmMode: p.farmMode,
+    online: now - (p.lastSeen || 0) < 30000,
+    ago: Math.round((now - (p.lastSeen || 0)) / 1000) + "s",
+  }));
+  res.type("html").send(`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8"><meta http-equiv="refresh" content="4">
+<title>Online</title><style>body{font-family:sans-serif;background:#111;color:#eee;padding:24px} .ok{color:#4ade80}</style></head>
+<body><h1>المتصلون (${list.filter((x) => x.online).length})</h1>
+<pre>${JSON.stringify(list, null, 2)}</pre>
+<p>إذا القائمة فاضية، السكربت ما يرسل للموقع.</p>
+</body></html>`);
+});
+
 app.post("/api/heartbeat", (req, res) => {
   const key = req.query.key || req.headers["x-api-key"];
   if (key !== API_KEY) return res.status(401).json({ error: "Unauthorized" });
