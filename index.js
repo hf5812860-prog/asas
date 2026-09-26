@@ -1,6 +1,5 @@
 // ═══════════════════════════════════════════════════════
-// Roblox Script Host + Dashboard v2.0
-// رفع سكربت + loadstring + إحصائيات مباشرة
+// Roblox Trade Host + Dashboard v3.0
 // ═══════════════════════════════════════════════════════
 const express      = require('express');
 const cookieParser = require('cookie-parser');
@@ -40,7 +39,7 @@ const TRADE_EXPIRE   = 30 * 1000;
 // ═══════════════════════════════════════════════════════
 // 🗄️ Database
 // ═══════════════════════════════════════════════════════
-const scripts       = {}; // السكربتات المرفوعة
+const scripts       = {};
 const users         = {};
 const trades        = {};
 const tradeRequests = {};
@@ -133,9 +132,7 @@ function layout({ title, page, content }) {
 
     const navHTML = navItems.map(item => {
         const active = page === item.id;
-        const cls = active
-            ? 'bg-gradient-to-r from-blue-500 to-purple-600 text-white'
-            : 'text-gray-400 hover:bg-gray-800/50';
+        const cls = active ? 'bg-gradient-to-r from-blue-500 to-purple-600 text-white' : 'text-gray-400 hover:bg-gray-800/50';
         return `<a href="${item.href}" class="flex items-center gap-3 px-4 py-3 rounded-xl ${cls}">
             <span class="text-xl">${item.icon}</span>
             <span class="font-semibold">${item.label}</span>
@@ -147,7 +144,7 @@ function layout({ title, page, content }) {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>${esc(title)} — Script Host</title>
+<title>${esc(title)} — Trade Host</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&family=JetBrains+Mono&display=swap" rel="stylesheet">
@@ -173,8 +170,8 @@ function layout({ title, page, content }) {
                     <span class="text-2xl">🚀</span>
                 </div>
                 <div>
-                    <div class="font-bold text-white">Script Host</div>
-                    <div class="text-xs text-gray-500">v2.0</div>
+                    <div class="font-bold text-white">Trade Host</div>
+                    <div class="text-xs text-gray-500">v3.0</div>
                 </div>
             </div>
         </div>
@@ -213,7 +210,7 @@ app.get('/login', (req, res) => {
         <div class="inline-block p-4 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl mb-4">
             <span class="text-5xl">🚀</span>
         </div>
-        <h1 class="text-3xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">Script Host</h1>
+        <h1 class="text-3xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">Trade Host</h1>
     </div>
     ${err}
     <form method="POST" action="/login" class="space-y-4">
@@ -313,15 +310,12 @@ app.get('/dashboard', adminAuth, (req, res) => {
                 </div>
             </div>
         </header>
-
         <div class="p-6 space-y-6">
             <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">${statsHTML}</div>
-
             <div class="bg-gray-900/60 border border-gray-800 rounded-2xl p-6">
                 <h2 class="font-bold text-white mb-4 flex items-center gap-2"><span class="text-xl">📈</span> النشاط المباشر</h2>
                 <div style="height: 250px;"><canvas id="activityChart"></canvas></div>
             </div>
-
             <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div class="bg-gray-900/60 border border-gray-800 rounded-2xl overflow-hidden">
                     <div class="p-5 border-b border-gray-800 flex items-center justify-between">
@@ -330,7 +324,6 @@ app.get('/dashboard', adminAuth, (req, res) => {
                     </div>
                     <div class="p-4 max-h-80 overflow-auto">${onlineHTML}</div>
                 </div>
-
                 <div class="bg-gray-900/60 border border-gray-800 rounded-2xl overflow-hidden">
                     <div class="p-5 border-b border-gray-800 flex items-center justify-between">
                         <h2 class="font-bold text-white flex items-center gap-2"><span class="text-xl">📤</span> الناشرين (5د)</h2>
@@ -340,7 +333,6 @@ app.get('/dashboard', adminAuth, (req, res) => {
                 </div>
             </div>
         </div>
-
         <script>
             const timeline = ${JSON.stringify(timeline)};
             const labels = timeline.map(t => {
@@ -369,7 +361,6 @@ app.get('/dashboard', adminAuth, (req, res) => {
             });
         </script>
     `;
-
     res.send(layout({ title: 'لوحة التحكم', page: 'dashboard', content }));
 });
 
@@ -384,7 +375,7 @@ app.get('/scripts', adminAuth, (req, res) => {
         ? `<div class="text-center py-16 col-span-full">
              <div class="text-6xl mb-4">📜</div>
              <div class="text-gray-400 mb-2">لا توجد سكربتات</div>
-             <div class="text-gray-500 text-sm mb-6">ارفع سكربتك ليصبح متاح للتحميل</div>
+             <div class="text-gray-500 text-sm mb-6">ارفع سكربت Trade Feed لتحصل على loadstring</div>
              <a href="/scripts/new" class="inline-block px-6 py-3 bg-gradient-to-r from-blue-500 to-purple-600 text-white font-bold rounded-xl">+ ارفع أول سكربت</a>
            </div>`
         : list.map(s => {
@@ -405,31 +396,26 @@ app.get('/scripts', adminAuth, (req, res) => {
                         <div class="text-xs text-gray-500">تحميل</div>
                     </div>
                 </div>
-
                 <div class="bg-gray-950 border border-gray-800 rounded-xl p-3 mb-3">
-                    <div class="text-xs text-gray-500 mb-2">🔗 loadstring مباشر (انسخ والصق في Roblox):</div>
+                    <div class="text-xs text-gray-500 mb-2">🔗 loadstring مباشر:</div>
                     <div class="flex items-center gap-2">
                         <code class="flex-1 text-emerald-400 text-xs overflow-x-auto whitespace-nowrap">${esc(loadCmd)}</code>
                         <button onclick="copyCmd('${esc(loadCmd).replace(/'/g, "\\'")}')" 
-                                class="px-3 py-1.5 bg-blue-500/20 text-blue-400 rounded-lg hover:bg-blue-500/30 text-xs font-semibold whitespace-nowrap">
-                            📋 نسخ
-                        </button>
+                                class="px-3 py-1.5 bg-blue-500/20 text-blue-400 rounded-lg text-xs font-semibold whitespace-nowrap">📋 نسخ</button>
                     </div>
                 </div>
-
                 <div class="flex gap-2 text-xs text-gray-500 mb-3">
                     <span>آخر تحديث: ${timeAgo(s.updatedAt)}</span>
                     <span>•</span>
                     <span>${s.content.length} حرف</span>
                 </div>
-
                 <div class="flex gap-2">
-                    <a href="/scripts/edit/${s.name}" class="flex-1 py-2 bg-blue-500/20 text-blue-400 rounded-lg hover:bg-blue-500/30 text-sm font-semibold text-center">✏️ تعديل</a>
+                    <a href="/scripts/edit/${s.name}" class="flex-1 py-2 bg-blue-500/20 text-blue-400 rounded-lg text-sm font-semibold text-center">✏️ تعديل</a>
                     <form method="POST" action="/admin/scripts/delete" onsubmit="return confirm('حذف؟')" class="flex-1">
                         <input type="hidden" name="name" value="${esc(s.name)}">
-                        <button type="submit" class="w-full py-2 bg-red-500/20 text-red-400 rounded-lg hover:bg-red-500/30 text-sm font-semibold">🗑️ حذف</button>
+                        <button type="submit" class="w-full py-2 bg-red-500/20 text-red-400 rounded-lg text-sm font-semibold">🗑️ حذف</button>
                     </form>
-                    <a href="/load/${s.name}" target="_blank" class="flex-1 py-2 bg-emerald-500/20 text-emerald-400 rounded-lg hover:bg-emerald-500/30 text-sm font-semibold text-center">👁️ معاينة</a>
+                    <a href="/load/${s.name}" target="_blank" class="flex-1 py-2 bg-emerald-500/20 text-emerald-400 rounded-lg text-sm font-semibold text-center">👁️ معاينة</a>
                 </div>
             </div>`;
         }).join('');
@@ -439,7 +425,7 @@ app.get('/scripts', adminAuth, (req, res) => {
             <div class="flex items-center justify-between flex-wrap gap-4">
                 <div>
                     <h1 class="text-2xl font-bold text-white">📜 السكربتات</h1>
-                    <p class="text-gray-500 text-sm mt-1">ارفع سكربتك واحصل على loadstring مباشر</p>
+                    <p class="text-gray-500 text-sm mt-1">ارفع السكربت واحصل على loadstring مباشر</p>
                 </div>
                 <a href="/scripts/new" class="px-5 py-2.5 bg-gradient-to-r from-emerald-500 to-emerald-600 text-white font-bold rounded-xl">+ ارفع سكربت</a>
             </div>
@@ -453,19 +439,14 @@ app.get('/scripts', adminAuth, (req, res) => {
             }
         </script>
     `;
-
     res.send(layout({ title: 'السكربتات', page: 'scripts', content }));
 });
 
-// نموذج رفع سكربت جديد
 app.get('/scripts/new', adminAuth, (req, res) => {
     const content = `
         <header class="bg-gray-900/60 backdrop-blur border-b border-gray-800 p-6 sticky top-0 z-10">
             <div class="flex items-center justify-between">
-                <div>
-                    <h1 class="text-2xl font-bold text-white">➕ رفع سكربت</h1>
-                    <p class="text-gray-500 text-sm mt-1">الصق كود Luau كامل</p>
-                </div>
+                <h1 class="text-2xl font-bold text-white">➕ رفع سكربت</h1>
                 <a href="/scripts" class="px-5 py-2.5 bg-gray-800 text-white font-bold rounded-xl">← رجوع</a>
             </div>
         </header>
@@ -474,18 +455,19 @@ app.get('/scripts/new', adminAuth, (req, res) => {
                 <div>
                     <label class="block text-gray-300 text-sm font-semibold mb-2">اسم السكربت (إنجليزي بدون مسافات)</label>
                     <input type="text" name="name" required pattern="[a-zA-Z0-9_\\-]{1,64}" placeholder="trade-feed"
-                        class="w-full px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-xl text-white focus:border-blue-500 focus:outline-none">
+                        class="w-full px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-xl text-white">
                     <p class="text-xs text-gray-500 mt-1">يُستخدم في: <code class="text-blue-400">/load/اسم-السكربت</code></p>
                 </div>
                 <div>
                     <label class="block text-gray-300 text-sm font-semibold mb-2">الوصف (اختياري)</label>
-                    <input type="text" name="description" placeholder="سكربت مقايضة السيارات"
-                        class="w-full px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-xl text-white focus:border-blue-500 focus:outline-none">
+                    <input type="text" name="description" placeholder="سكربت مقايضة السيارات v10"
+                        class="w-full px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-xl text-white">
                 </div>
                 <div>
                     <label class="block text-gray-300 text-sm font-semibold mb-2">كود السكربت (Luau)</label>
-                    <textarea name="content" required rows="25" placeholder="-- الصق كود السكربت هنا"
-                        class="w-full px-4 py-3 bg-gray-950 border border-gray-700 rounded-xl text-emerald-400 text-sm focus:border-blue-500 focus:outline-none resize-y"></textarea>
+                    <textarea name="content" required rows="30" placeholder="-- الصق كود Trade Feed هنا"
+                        class="w-full px-4 py-3 bg-gray-950 border border-gray-700 rounded-xl text-emerald-400 text-sm resize-y"></textarea>
+                    <p class="text-xs text-yellow-400 mt-2">⚠️ تذكر تغيير API_URL داخل السكربت للرابط الجديد!</p>
                 </div>
                 <div class="flex gap-3 pt-2">
                     <button type="submit" class="flex-1 py-3 bg-gradient-to-r from-emerald-500 to-emerald-600 text-white font-bold rounded-xl">💾 حفظ</button>
@@ -512,7 +494,7 @@ app.get('/scripts/edit/:name', adminAuth, (req, res) => {
             <form method="POST" action="/admin/scripts/save" class="bg-gray-900/60 border border-gray-800 rounded-2xl p-6 space-y-5">
                 <input type="hidden" name="originalName" value="${esc(s.name)}">
                 <div>
-                    <label class="block text-gray-300 text-sm font-semibold mb-2">اسم السكربت</label>
+                    <label class="block text-gray-300 text-sm font-semibold mb-2">الاسم</label>
                     <input type="text" name="name" required pattern="[a-zA-Z0-9_\\-]{1,64}" value="${esc(s.name)}"
                         class="w-full px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-xl text-white">
                 </div>
@@ -523,7 +505,7 @@ app.get('/scripts/edit/:name', adminAuth, (req, res) => {
                 </div>
                 <div>
                     <label class="block text-gray-300 text-sm font-semibold mb-2">الكود</label>
-                    <textarea name="content" required rows="25"
+                    <textarea name="content" required rows="30"
                         class="w-full px-4 py-3 bg-gray-950 border border-gray-700 rounded-xl text-emerald-400 text-sm">${esc(s.content)}</textarea>
                 </div>
                 <div class="flex gap-3">
@@ -536,7 +518,6 @@ app.get('/scripts/edit/:name', adminAuth, (req, res) => {
     res.send(layout({ title: 'تعديل', page: 'scripts', content }));
 });
 
-// حفظ سكربت
 app.post('/admin/scripts/save', adminAuth, (req, res) => {
     const { name, description, content, originalName } = req.body;
     if (!name || !content) return res.status(400).send('Missing data');
@@ -668,7 +649,7 @@ app.post('/api/trade/:id/delete', apiAuth, (req, res) => {
 });
 
 app.post('/api/trade/request', apiAuth, (req, res) => {
-    const { tradeId, fromId, fromName, toId, toName, myItems } = req.body;
+    const { tradeId, fromId, fromName, toId, toName, myItems, jobId, fromJobId } = req.body;
     if (!fromId || !toId) return res.status(400).json({ error: 'Missing data' });
 
     const id = 'req_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
@@ -677,6 +658,8 @@ app.post('/api/trade/request', apiAuth, (req, res) => {
         fromId: parseInt(fromId), fromName,
         toId: parseInt(toId), toName,
         myItems: Array.isArray(myItems) ? myItems : [],
+        jobId: jobId || '',
+        fromJobId: fromJobId || '',
         status: 'pending',
         createdAt: Date.now(),
     };
@@ -711,6 +694,13 @@ app.post('/api/trade/request/reject', apiAuth, (req, res) => {
     r.status = 'rejected';
     r.rejectedAt = Date.now();
     addLog('reject', `${r.toName} رفض ${r.fromName}`);
+    res.json({ success: true });
+});
+
+app.post('/api/trade/cancel', apiAuth, (req, res) => {
+    const { tradeId } = req.body;
+    const r = tradeRequests[tradeId];
+    if (r) { r.status = 'cancelled'; r.cancelledAt = Date.now(); }
     res.json({ success: true });
 });
 
@@ -773,7 +763,11 @@ app.post('/api/dm/send', apiAuth, (req, res) => {
     totalMessages++;
     if (users[fromId]) users[fromId].messagesSent = (users[fromId].messagesSent || 0) + 1;
 
-    addLog('dm', `${fromName} → ${toName}`);
+    // تجاهل الإشارات الخاصة [[JOIN]] و [[LEFT]] في السجلات لتقليل الفوضى
+    const msgStr = String(message).trim();
+    if (msgStr !== '[[JOIN]]' && msgStr !== '[[LEFT]]') {
+        addLog('dm', `${fromName} → ${toName}`);
+    }
     res.json({ success: true });
 });
 
@@ -814,9 +808,7 @@ app.get('/trades', adminAuth, (req, res) => {
                     <h1 class="text-2xl font-bold text-white">🔄 العروض</h1>
                     <p class="text-gray-500 text-sm mt-1">آخر 50 عرض</p>
                 </div>
-                <div class="flex gap-3 text-sm">
-                    <span class="px-3 py-2 bg-emerald-500/10 border border-emerald-500/30 rounded-lg text-emerald-400">${active.length} نشط</span>
-                </div>
+                <span class="px-3 py-2 bg-emerald-500/10 border border-emerald-500/30 rounded-lg text-emerald-400 text-sm">${active.length} نشط</span>
             </div>
         </header>
         <div class="p-6">${html}</div>
@@ -830,15 +822,19 @@ app.get('/trades', adminAuth, (req, res) => {
 app.get('/chats', adminAuth, (req, res) => {
     const convList = Object.entries(conversations).map(([key, msgs]) => {
         const [a, b] = key.split('_').map(Number);
+        const realMsgs = msgs.filter(m => {
+            const t = String(m.message || '').trim();
+            return t !== '[[JOIN]]' && t !== '[[LEFT]]';
+        });
         return {
             key,
             userA: { id: a, name: users[a]?.username || 'Player' + a },
             userB: { id: b, name: users[b]?.username || 'Player' + b },
-            messages: msgs,
-            lastMsg: msgs.length ? msgs[msgs.length - 1] : null,
-            count: msgs.length,
+            messages: realMsgs,
+            lastMsg: realMsgs.length ? realMsgs[realMsgs.length - 1] : null,
+            count: realMsgs.length,
         };
-    }).sort((a, b) => (b.lastMsg?.time || 0) - (a.lastMsg?.time || 0));
+    }).filter(c => c.count > 0).sort((a, b) => (b.lastMsg?.time || 0) - (a.lastMsg?.time || 0));
 
     const html = convList.length === 0
         ? '<div class="text-center py-12 text-gray-500">لا توجد محادثات</div>'
@@ -877,7 +873,10 @@ app.get('/chats', adminAuth, (req, res) => {
 });
 
 app.get('/chats/:key', adminAuth, (req, res) => {
-    const msgs = conversations[req.params.key] || [];
+    const msgs = (conversations[req.params.key] || []).filter(m => {
+        const t = String(m.message || '').trim();
+        return t !== '[[JOIN]]' && t !== '[[LEFT]]';
+    });
     const [a, b] = req.params.key.split('_').map(Number);
 
     const messagesHTML = msgs.length === 0
@@ -1007,7 +1006,7 @@ if (require.main === module) {
     app.listen(PORT, () => {
         console.log('');
         console.log('╔══════════════════════════════════════════════╗');
-        console.log('║  🚀 Script Host + Dashboard v2.0             ║');
+        console.log('║  🚀 Trade Host + Dashboard v3.0              ║');
         console.log('╠══════════════════════════════════════════════╣');
         console.log(`║  🌐 http://localhost:${PORT}/dashboard`);
         console.log(`║  🔑 API: ${API_KEY}`);
