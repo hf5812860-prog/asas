@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════
-// 🚀 Rejoin Self-Reload Host v3.0 — Smart Auto-Inject
+// 🚀 Rejoin Self-Reload Host v1.0
 // ═══════════════════════════════════════════════════════
 const express = require('express');
 const app = express();
@@ -8,6 +8,7 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(express.text({ type: ['text/*', 'text/plain'], limit: '50mb' }));
 
+// ─── CORS ───
 app.use((req, res, next) => {
     res.header('Access-Control-Allow-Origin', '*');
     res.header('Access-Control-Allow-Headers', '*');
@@ -16,6 +17,57 @@ app.use((req, res, next) => {
     next();
 });
 
+// ─── Parse string body ───
+app.use((req, res, next) => {
+    if (typeof req.body === 'string' && req.body.trim()) {
+        try { req.body = JSON.parse(req.body); } catch (e) {}
+    }
+    if (!req.body || typeof req.body !== 'object') req.body = {};
+    next();
+});
+
+// ═══════════════════════════════════════════════════════
+// ⚙️ الإعدادات
+// ═══════════════════════════════════════════════════════
+const API_KEY        = process.env.API_KEY        || "JXZXCV";
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admin123";
+const SESSION_SECRET = process.env.SESSION_SECRET || "secret-" + Math.random().toString(36).slice(2);
+
+// ═══════════════════════════════════════════════════════
+// 🗄️ Database (in-memory)
+// ═══════════════════════════════════════════════════════
+const scripts = {};
+
+// ═══════════════════════════════════════════════════════
+// 🛠️ Helpers
+// ═══════════════════════════════════════════════════════
+function validName(n) {
+    return /^[a-zA-Z0-9_\-]{1,64}$/.test(n);
+}
+
+function esc(s) {
+    return String(s || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function adminAuth(req, res, next) {
+    const token = req.cookies?.admin_token || req.headers['x-admin-token'] || req.query.token;
+    if (token !== SESSION_SECRET) return res.redirect('/login');
+    next();
+}
+
+function apiAuth(req, res, next) {
+    if (req.headers['x-api-key'] !== API_KEY) {
+        return res.status(401).json({ error: 'Unauthorized' });
+    }
+    next();
+}
+
+// cookie parser بسيط
 app.use((req, res, next) => {
     req.cookies = {};
     const cookie = req.headers.cookie;
@@ -28,39 +80,6 @@ app.use((req, res, next) => {
     next();
 });
 
-app.use((req, res, next) => {
-    if (typeof req.body === 'string' && req.body.trim()) {
-        try { req.body = JSON.parse(req.body); } catch (e) {}
-    }
-    if (!req.body || typeof req.body !== 'object') req.body = {};
-    next();
-});
-
-const API_KEY        = process.env.API_KEY        || "JXZXCV";
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admin123";
-const SESSION_SECRET = process.env.SESSION_SECRET || "secret-" + Math.random().toString(36).slice(2);
-
-const scripts = {};
-
-function validName(n) { return /^[a-zA-Z0-9_\-]{1,64}$/.test(n); }
-function esc(s) {
-    return String(s || '')
-        .replace(/&/g, '&amp;').replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-}
-
-function adminAuth(req, res, next) {
-    const token = req.cookies?.admin_token || req.headers['x-admin-token'] || req.query.token;
-    if (token !== SESSION_SECRET) return res.redirect('/login');
-    next();
-}
-
-function apiAuth(req, res, next) {
-    if (req.headers['x-api-key'] !== API_KEY) return res.status(401).json({ error: 'Unauthorized' });
-    next();
-}
-
 // ═══════════════════════════════════════════════════════
 // 🎨 Layout
 // ═══════════════════════════════════════════════════════
@@ -69,11 +88,15 @@ function layout({ title, page, content }) {
         { href: '/dashboard', icon: '📊', label: 'لوحة التحكم', id: 'dashboard' },
         { href: '/scripts',   icon: '📜', label: 'السكربتات',   id: 'scripts' },
     ];
+
     const navHTML = navItems.map(item => {
         const active = page === item.id;
-        const cls = active ? 'bg-gradient-to-r from-blue-500 to-purple-600 text-white' : 'text-gray-400 hover:bg-gray-800/50';
+        const cls = active
+            ? 'bg-gradient-to-r from-blue-500 to-purple-600 text-white'
+            : 'text-gray-400 hover:bg-gray-800/50';
         return `<a href="${item.href}" class="flex items-center gap-3 px-4 py-3 rounded-xl ${cls}">
-            <span class="text-xl">${item.icon}</span><span class="font-semibold">${item.label}</span>
+            <span class="text-xl">${item.icon}</span>
+            <span class="font-semibold">${item.label}</span>
         </a>`;
     }).join('');
 
@@ -96,6 +119,7 @@ function layout({ title, page, content }) {
 </style>
 </head>
 <body class="min-h-screen text-gray-200">
+
 <div class="flex min-h-screen">
     <aside class="w-64 bg-gray-900/80 border-l border-gray-800 flex-shrink-0 hidden md:flex md:flex-col">
         <div class="p-6 border-b border-gray-800">
@@ -103,18 +127,23 @@ function layout({ title, page, content }) {
                 <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
                     <span class="text-2xl">🔄</span>
                 </div>
-                <div><div class="font-bold text-white">Rejoin Host</div><div class="text-xs text-gray-500">v3.0</div></div>
+                <div>
+                    <div class="font-bold text-white">Rejoin Host</div>
+                    <div class="text-xs text-gray-500">v1.0</div>
+                </div>
             </div>
         </div>
         <nav class="flex-1 p-4 space-y-2">${navHTML}</nav>
         <div class="p-4 border-t border-gray-800">
             <a href="/logout" class="flex items-center gap-3 px-4 py-3 rounded-xl text-red-400 hover:bg-red-500/10">
-                <span class="text-xl">🚪</span><span class="font-semibold">خروج</span>
+                <span class="text-xl">🚪</span>
+                <span class="font-semibold">خروج</span>
             </a>
         </div>
     </aside>
     <main class="flex-1 overflow-auto">${content}</main>
 </div>
+
 </body>
 </html>`;
 }
@@ -123,10 +152,13 @@ function layout({ title, page, content }) {
 // 🔐 Login
 // ═══════════════════════════════════════════════════════
 app.get('/login', (req, res) => {
-    const err = req.query.error ? `<div class="mb-6 p-4 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400 text-sm text-center">❌ كلمة المرور غير صحيحة</div>` : '';
+    const err = req.query.error
+        ? `<div class="mb-6 p-4 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400 text-sm text-center">❌ كلمة المرور غير صحيحة</div>`
+        : '';
     res.send(`<!DOCTYPE html>
 <html lang="ar" dir="rtl">
-<head><meta charset="UTF-8"><title>دخول</title>
+<head>
+<meta charset="UTF-8"><title>دخول</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap" rel="stylesheet">
 <style>* { font-family: 'Cairo', sans-serif; } body { background: linear-gradient(135deg, #0f0f16 0%, #1a1a2e 50%, #0f0f16 100%); }</style>
@@ -161,7 +193,14 @@ app.post('/login', (req, res) => {
     }
 });
 
-app.get('/logout', (req, res) => { res.clearCookie('admin_token'); res.redirect('/login'); });
+app.get('/logout', (req, res) => {
+    res.clearCookie('admin_token');
+    res.redirect('/login');
+});
+
+// ═══════════════════════════════════════════════════════
+// 🏠 Home → Dashboard
+// ═══════════════════════════════════════════════════════
 app.get('/', (req, res) => res.redirect('/dashboard'));
 
 // ═══════════════════════════════════════════════════════
@@ -171,23 +210,26 @@ app.get('/dashboard', adminAuth, (req, res) => {
     const list = Object.values(scripts);
     const totalLoads = list.reduce((a, s) => a + (s.loads || 0), 0);
 
-    const statsHTML = `
-        <div class="bg-gradient-to-br from-blue-500/10 to-blue-500/5 border border-blue-500/20 rounded-2xl p-6 glow">
-            <div class="text-3xl mb-2">📜</div>
-            <div class="text-4xl font-bold text-blue-400">${list.length}</div>
-            <div class="text-gray-400 text-sm mt-2">سكربتات</div>
+    const stats = [
+        { icon: '📜', num: list.length, lbl: 'سكربتات', color: 'blue' },
+        { icon: '⚡', num: totalLoads, lbl: 'تحميلات', color: 'emerald' },
+    ];
+
+    const statsHTML = stats.map(s => `
+        <div class="bg-gradient-to-br from-${s.color}-500/10 to-${s.color}-500/5 border border-${s.color}-500/20 rounded-2xl p-6 glow">
+            <div class="text-3xl mb-2">${s.icon}</div>
+            <div class="text-4xl font-bold text-${s.color}-400">${s.num}</div>
+            <div class="text-gray-400 text-sm mt-2">${s.lbl}</div>
         </div>
-        <div class="bg-gradient-to-br from-emerald-500/10 to-emerald-500/5 border border-emerald-500/20 rounded-2xl p-6 glow">
-            <div class="text-3xl mb-2">⚡</div>
-            <div class="text-4xl font-bold text-emerald-400">${totalLoads}</div>
-            <div class="text-gray-400 text-sm mt-2">تحميلات</div>
-        </div>`;
+    `).join('');
 
     const listHTML = list.length === 0
         ? `<div class="text-center py-12 text-gray-500">
              <div class="text-5xl mb-4">📭</div>
              <div class="mb-4">لا توجد سكربتات بعد</div>
-             <a href="/scripts/new" class="inline-block px-6 py-3 bg-gradient-to-r from-blue-500 to-purple-600 text-white font-bold rounded-xl">+ ارفع أول سكربت</a>
+             <a href="/scripts/new" class="inline-block px-6 py-3 bg-gradient-to-r from-blue-500 to-purple-600 text-white font-bold rounded-xl">
+                 + ارفع أول سكربت
+             </a>
            </div>`
         : list.slice(0, 5).map(s => `
             <div class="flex items-center justify-between p-4 bg-gray-800/40 rounded-xl border border-gray-800 mb-2">
@@ -209,13 +251,17 @@ app.get('/dashboard', adminAuth, (req, res) => {
                     <h1 class="text-2xl font-bold text-white">📊 لوحة التحكم</h1>
                     <p class="text-gray-500 text-sm mt-1">إدارة سكربتات الريجوين</p>
                 </div>
-                <a href="/scripts/new" class="px-5 py-2.5 bg-gradient-to-r from-emerald-500 to-emerald-600 text-white font-bold rounded-xl">+ ارفع سكربت</a>
+                <a href="/scripts/new" class="px-5 py-2.5 bg-gradient-to-r from-emerald-500 to-emerald-600 text-white font-bold rounded-xl">
+                    + ارفع سكربت
+                </a>
             </div>
         </header>
         <div class="p-6 space-y-6">
             <div class="grid grid-cols-2 gap-4 max-w-2xl">${statsHTML}</div>
             <div class="bg-gray-900/60 border border-gray-800 rounded-2xl p-6">
-                <h2 class="font-bold text-white mb-4 flex items-center gap-2"><span class="text-xl">📋</span> آخر السكربتات</h2>
+                <h2 class="font-bold text-white mb-4 flex items-center gap-2">
+                    <span class="text-xl">📋</span> آخر السكربتات
+                </h2>
                 ${listHTML}
             </div>
         </div>
@@ -234,7 +280,9 @@ app.get('/scripts', adminAuth, (req, res) => {
         ? `<div class="text-center py-16">
              <div class="text-6xl mb-4">📜</div>
              <div class="text-gray-400 mb-6">لا توجد سكربتات</div>
-             <a href="/scripts/new" class="inline-block px-6 py-3 bg-gradient-to-r from-blue-500 to-purple-600 text-white font-bold rounded-xl">+ ارفع أول سكربت</a>
+             <a href="/scripts/new" class="inline-block px-6 py-3 bg-gradient-to-r from-blue-500 to-purple-600 text-white font-bold rounded-xl">
+                 + ارفع أول سكربت
+             </a>
            </div>`
         : list.map(s => {
             const url = host + '/load/' + s.name;
@@ -246,7 +294,7 @@ app.get('/scripts', adminAuth, (req, res) => {
                         <div class="flex items-center gap-2 mb-1">
                             <span class="text-2xl">📜</span>
                             <h3 class="text-xl font-bold text-white">${esc(s.name)}</h3>
-                            <span class="px-2 py-0.5 bg-emerald-500/20 text-emerald-400 text-xs rounded font-bold">🔗 Smart-Rejoin</span>
+                            <span class="px-2 py-0.5 bg-emerald-500/20 text-emerald-400 text-xs rounded font-bold">🔗 Auto-Rejoin</span>
                         </div>
                         <p class="text-gray-400 text-sm">${esc(s.description || 'بدون وصف')}</p>
                     </div>
@@ -260,7 +308,9 @@ app.get('/scripts', adminAuth, (req, res) => {
                     <div class="flex items-center gap-2">
                         <code class="flex-1 text-emerald-400 text-xs overflow-x-auto whitespace-nowrap">${esc(loadCmd)}</code>
                         <button onclick="copyCmd('${esc(loadCmd).replace(/'/g, "\\'")}')"
-                                class="px-3 py-1.5 bg-blue-500/20 text-blue-400 rounded-lg text-xs font-semibold whitespace-nowrap">📋 نسخ</button>
+                                class="px-3 py-1.5 bg-blue-500/20 text-blue-400 rounded-lg text-xs font-semibold whitespace-nowrap">
+                            📋 نسخ
+                        </button>
                     </div>
                 </div>
                 <div class="flex gap-2">
@@ -279,7 +329,7 @@ app.get('/scripts', adminAuth, (req, res) => {
             <div class="flex items-center justify-between">
                 <div>
                     <h1 class="text-2xl font-bold text-white">📜 السكربتات</h1>
-                    <p class="text-gray-500 text-sm mt-1">يشغل نفسه فقط عند Rejoin/Hop</p>
+                    <p class="text-gray-500 text-sm mt-1">ارفع السكربت — يشتغل تلقائياً بعد الريجوين</p>
                 </div>
                 <a href="/scripts/new" class="px-5 py-2.5 bg-gradient-to-r from-emerald-500 to-emerald-600 text-white font-bold rounded-xl">+ ارفع</a>
             </div>
@@ -289,10 +339,10 @@ app.get('/scripts', adminAuth, (req, res) => {
                 <div class="flex items-start gap-3">
                     <span class="text-2xl">✨</span>
                     <div>
-                        <div class="font-bold text-emerald-400 mb-1">حقن تلقائي ذكي</div>
+                        <div class="font-bold text-emerald-400 mb-1">الربط التلقائي مُفعّل</div>
                         <div class="text-sm text-gray-300">
-                            الموقع يحقن كود يكشف أي <code class="text-emerald-400">TeleportToPlaceInstance</code> أو <code class="text-emerald-400">TeleportAsync</code> في سكربتك —
-                            ويسجل Self-Reload تلقائياً عند تنفيذه.
+                            السيرفر يستبدل <code class="text-emerald-400">API_URL</code> و <code class="text-emerald-400">API_KEY</code> و <code class="text-emerald-400">HOST_URL</code> تلقائياً.
+                            فقط الصق السكربت كما هو.
                         </div>
                     </div>
                 </div>
@@ -300,7 +350,9 @@ app.get('/scripts', adminAuth, (req, res) => {
             <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">${html}</div>
         </div>
         <script>
-            function copyCmd(cmd) { navigator.clipboard.writeText(cmd).then(() => alert('✅ تم النسخ!')); }
+            function copyCmd(cmd) {
+                navigator.clipboard.writeText(cmd).then(() => alert('✅ تم النسخ!'));
+            }
         </script>
     `;
     res.send(layout({ title: 'السكربتات', page: 'scripts', content }));
@@ -322,9 +374,9 @@ app.get('/scripts/new', adminAuth, (req, res) => {
                 <div class="flex items-start gap-3">
                     <span class="text-2xl">🔗</span>
                     <div>
-                        <div class="font-bold text-emerald-400 mb-1">حقن تلقائي</div>
+                        <div class="font-bold text-emerald-400 mb-1">الربط التلقائي</div>
                         <div class="text-sm text-gray-300">
-                            الصق السكربت <b>كما هو</b> — الموقع يحقن كود ذكي يكتشف Rejoin/Hop تلقائياً.
+                            الصق السكربت <b>كما هو</b> — السيرفر يستبدل الروابط تلقائياً ويحوّله لنسخة تدعم Rejoin.
                         </div>
                     </div>
                 </div>
@@ -421,6 +473,9 @@ app.post('/admin/scripts/save', adminAuth, (req, res) => {
     res.redirect('/scripts');
 });
 
+// ═══════════════════════════════════════════════════════
+// 🗑️ Delete Script
+// ═══════════════════════════════════════════════════════
 app.post('/admin/scripts/delete', adminAuth, (req, res) => {
     const { name } = req.body;
     if (scripts[name]) delete scripts[name];
@@ -428,7 +483,7 @@ app.post('/admin/scripts/delete', adminAuth, (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════
-// 🚀 Loadstring — Smart Auto-Inject v3
+// 🚀 Loadstring — Self-Reload Injection
 // ═══════════════════════════════════════════════════════
 app.get('/load/:name', (req, res) => {
     const s = scripts[req.params.name];
@@ -448,132 +503,55 @@ app.get('/load/:name', (req, res) => {
     const hostUrl = req.protocol + '://' + req.get('host');
     const scriptUrl = hostUrl + '/load/' + s.name;
 
-    // ═══════════════════════════════════════════════════════
-    // 🎯 الكود اللي يُحقن في بداية سكربتك
-    // ═══════════════════════════════════════════════════════
-    const header = `-- ═══════════════════════════════════════════════════
--- 🎯 ${s.name}
+    // ═══════════════════════════════════════════════════
+    // 🔗 INJECTION HEADER — يشتغل قبل السكربت
+    // ═══════════════════════════════════════════════════
+    const header = `-- ═══════════════════════════════════════════
+-- ${s.name}
 -- Server: ${hostUrl}
--- Loaded: ${new Date().toISOString()}
--- ═══════════════════════════════════════════════════
--- 🔗 SMART AUTO-INJECT v3.0
--- ═══════════════════════════════════════════════════
-
--- 🛡️ حماية من التشغيل المزدوج
-if _G.__HOST_LOADED and _G.__HOST_LOADED["${s.name}"] then
-    warn("[HOST] ⚠️ '${s.name}' محمّل مسبقاً — إلغاء")
-    return
-end
-
+-- Time: ${new Date().toISOString()}
+-- ═══════════════════════════════════════════
+-- 🔗 AUTO-INJECTED SELF-RELOAD
+-- ═══════════════════════════════════════════
 _G = _G or {}
 _G.HOST_URL = "${hostUrl}"
 _G.HOST_KEY = "${API_KEY}"
 _G.SCRIPT_URL = "${scriptUrl}"
-_G.SCRIPT_NAME = "${s.name}"
-_G.__HOST_LOADED = _G.__HOST_LOADED or {}
-_G.__HOST_LOADED["${s.name}"] = true
 
--- ═══════════════════════════════════════════════════
--- 🔑 نظام كشف Rejoin/Hop التلقائي
--- ═══════════════════════════════════════════════════
-local __HOST_RELOAD = {}
-__HOST_RELOAD.armed = false       -- هل نسجل عند Teleport؟
-__HOST_RELOAD.manual = false      -- هل سجّلنا يدوياً؟
-
--- دالة تسجيل Self-Reload
-function __HOST_RELOAD.Register()
-    if __HOST_RELOAD.manual then
-        print("[HOST] ℹ️ Self-Reload مسجّل مسبقاً")
-        return false
-    end
-    if not queue_on_teleport then
-        warn("[HOST] ❌ queue_on_teleport غير مدعوم")
-        return false
-    end
-    __HOST_RELOAD.manual = true
-    local ok = pcall(function()
-        queue_on_teleport([[
+-- ✅ حفظ لـ Rejoin Self-Reload
+if queue_on_teleport then
+    pcall(function()
+        queue_on_teleport(string.format([[
             task.wait(3)
-            _G = _G or {}
-            _G.__HOST_LOADED = nil
-            loadstring(game:HttpGet("]] .. scriptUrl .. [["))()
-        ]])
+            loadstring(game:HttpGet("%s"))()
+        ]], _G.SCRIPT_URL or "${scriptUrl}"))
     end)
-    if ok then
-        print("[HOST] ✅ Self-Reload مُفعّل — السكربت سيرجع بعد الريجوين")
-    else
-        warn("[HOST] ❌ فشل تسجيل Self-Reload")
-    end
-    return ok
 end
-
--- اجعلها متاحة عالمياً (عشان سكربتك يستخدمها لو حب)
-_G.RegisterSelfReload = __HOST_RELOAD.Register
-
--- ═══════════════════════════════════════════════════
--- 🕵️ اعتراض TeleportToPlaceInstance + TeleportAsync
--- ═══════════════════════════════════════════════════
-local TeleportService = game:GetService("TeleportService")
-
--- 1️⃣ اعتراض TeleportToPlaceInstance
-local __old_TPI = TeleportService.TeleportToPlaceInstance
-TeleportService.TeleportToPlaceInstance = function(self, ...)
-    -- سجّل Self-Reload تلقائياً قبل التنفيذ
-    __HOST_RELOAD.Register()
-    print("[HOST] 🎯 تم اعتراض TeleportToPlaceInstance — تسجيل Self-Reload")
-    return __old_TPI(self, ...)
-end
-
--- 2️⃣ اعتراض TeleportAsync
-local __old_TA = TeleportService.TeleportAsync
-TeleportService.TeleportAsync = function(self, ...)
-    __HOST_RELOAD.Register()
-    print("[HOST] 🎯 تم اعتراض TeleportAsync — تسجيل Self-Reload")
-    return __old_TA(self, ...)
-end
-
--- 3️⃣ اعتراض Teleport (العادي)
-local __old_T = TeleportService.Teleport
-TeleportService.Teleport = function(self, ...)
-    __HOST_RELOAD.Register()
-    print("[HOST] 🎯 تم اعتراض Teleport — تسجيل Self-Reload")
-    return __old_T(self, ...)
-end
-
--- 4️⃣ اعتراض TeleportToSpawnByName
-local __old_TTS = TeleportService.TeleportToSpawnByName
-TeleportService.TeleportToSpawnByName = function(self, ...)
-    __HOST_RELOAD.Register()
-    print("[HOST] 🎯 تم اعتراض TeleportToSpawnByName — تسجيل Self-Reload")
-    return __old_TTS(self, ...)
-end
-
--- 5️⃣ اعتراض TeleportPartyAsync (احتياطي)
-local __old_TPA = TeleportService.TeleportPartyAsync
-TeleportService.TeleportPartyAsync = function(self, ...)
-    __HOST_RELOAD.Register()
-    print("[HOST] 🎯 تم اعتراض TeleportPartyAsync — تسجيل Self-Reload")
-    return __old_TPA(self, ...)
-end
-
--- ═══════════════════════════════════════════════════
--- 📌 ملاحظة: لا نسجّل Self-Reload عند التحميل العادي
--- فقط عند استخدام أي Teleport function
--- ═══════════════════════════════════════════════════
-
-print("[HOST] ✅ Smart Auto-Inject جاهز — Self-Reload مُفعّل عند Rejoin/Hop فقط")
--- ═══════════════════════════════════════════════════
-
-`;
+-- ═══════════════════════════════════════════\n\n`;
 
     let content = s.content;
 
-    // ✅ استبدال ذكي
-    content = content.replace(/(\bAPI_URL\s*=\s*)["'][^"'\n]*["']/g, '$1_G.HOST_URL');
-    content = content.replace(/(\bAPI_KEY\s*=\s*)["'][^"'\n]*["']/g, '$1_G.HOST_KEY');
-    content = content.replace(/(\bBASE_URL\s*=\s*)["'][^"'\n]*["']/g, '$1_G.HOST_URL');
-    content = content.replace(/(\bHOST_URL\s*=\s*)["'][^"'\n]*["']/g, '$1_G.HOST_URL');
-    content = content.replace(/(\bHOST_KEY\s*=\s*)["'][^"'\n]*["']/g, '$1_G.HOST_KEY');
+    // ✅ استبدال ذكي — يدعم كل الأشكال
+    content = content.replace(
+        /(\bAPI_URL\s*=\s*)["'][^"'\n]*["']/g,
+        '$1_G.HOST_URL'
+    );
+    content = content.replace(
+        /(\bAPI_KEY\s*=\s*)["'][^"'\n]*["']/g,
+        '$1_G.HOST_KEY'
+    );
+    content = content.replace(
+        /(\bBASE_URL\s*=\s*)["'][^"'\n]*["']/g,
+        '$1_G.HOST_URL'
+    );
+    content = content.replace(
+        /(\bHOST_URL\s*=\s*)["'][^"'\n]*["']/g,
+        '$1_G.HOST_URL'
+    );
+    content = content.replace(
+        /(\bHOST_KEY\s*=\s*)["'][^"'\n]*["']/g,
+        '$1_G.HOST_KEY'
+    );
 
     res.send(header + content);
 });
@@ -582,7 +560,20 @@ print("[HOST] ✅ Smart Auto-Inject جاهز — Self-Reload مُفعّل عند
 // 🔌 API
 // ═══════════════════════════════════════════════════════
 app.get('/api/status', apiAuth, (req, res) => {
-    res.json({ ok: true, scripts: Object.keys(scripts).length, uptime: process.uptime() });
+    res.json({
+        ok: true,
+        scripts: Object.keys(scripts).length,
+        uptime: process.uptime(),
+    });
+});
+
+app.get('/api/scripts', apiAuth, (req, res) => {
+    res.json(Object.values(scripts).map(s => ({
+        name: s.name,
+        description: s.description,
+        loads: s.loads,
+        updatedAt: s.updatedAt,
+    })));
 });
 
 // ═══════════════════════════════════════════════════════
@@ -594,7 +585,7 @@ if (require.main === module) {
     app.listen(PORT, () => {
         console.log('');
         console.log('╔══════════════════════════════════════════════╗');
-        console.log('║  🔄 Rejoin Host v3.0 — Smart Auto-Inject     ║');
+        console.log('║  🔄 Rejoin Self-Reload Host v1.0             ║');
         console.log('╠══════════════════════════════════════════════╣');
         console.log(`║  🌐 http://localhost:${PORT}/dashboard`);
         console.log(`║  🔑 API Key: ${API_KEY}`);
