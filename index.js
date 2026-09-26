@@ -1,5 +1,6 @@
 // ═══════════════════════════════════════════════════════
-// Roblox Trade Host + Dashboard v3.0
+// Roblox Trade Host v4.0 — Auto-Injection
+// السكربت يستقبل API_URL تلقائياً بدون تعديل يدوي
 // ═══════════════════════════════════════════════════════
 const express      = require('express');
 const cookieParser = require('cookie-parser');
@@ -171,7 +172,7 @@ function layout({ title, page, content }) {
                 </div>
                 <div>
                     <div class="font-bold text-white">Trade Host</div>
-                    <div class="text-xs text-gray-500">v3.0</div>
+                    <div class="text-xs text-gray-500">v4.0 • Auto</div>
                 </div>
             </div>
         </div>
@@ -211,10 +212,11 @@ app.get('/login', (req, res) => {
             <span class="text-5xl">🚀</span>
         </div>
         <h1 class="text-3xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">Trade Host</h1>
+        <p class="text-gray-400 mt-2 text-sm">كلمة المرور</p>
     </div>
     ${err}
     <form method="POST" action="/login" class="space-y-4">
-        <input type="password" name="password" required placeholder="••••••••"
+        <input type="password" name="password" required placeholder="••••••••" autofocus
             class="w-full px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-xl text-white focus:border-blue-500 focus:outline-none">
         <button type="submit" class="w-full py-3 bg-gradient-to-r from-blue-500 to-purple-600 text-white font-bold rounded-xl">🔓 دخول</button>
     </form>
@@ -375,7 +377,7 @@ app.get('/scripts', adminAuth, (req, res) => {
         ? `<div class="text-center py-16 col-span-full">
              <div class="text-6xl mb-4">📜</div>
              <div class="text-gray-400 mb-2">لا توجد سكربتات</div>
-             <div class="text-gray-500 text-sm mb-6">ارفع سكربت Trade Feed لتحصل على loadstring</div>
+             <div class="text-gray-500 text-sm mb-6">ارفع السكربت — راح يرتبط تلقائياً بالسيرفر</div>
              <a href="/scripts/new" class="inline-block px-6 py-3 bg-gradient-to-r from-blue-500 to-purple-600 text-white font-bold rounded-xl">+ ارفع أول سكربت</a>
            </div>`
         : list.map(s => {
@@ -388,6 +390,7 @@ app.get('/scripts', adminAuth, (req, res) => {
                         <div class="flex items-center gap-2">
                             <span class="text-2xl">📜</span>
                             <h3 class="text-xl font-bold text-white">${esc(s.name)}</h3>
+                            <span class="px-2 py-1 bg-emerald-500/20 text-emerald-400 text-xs rounded font-bold">🔗 تلقائي</span>
                         </div>
                         <p class="text-gray-400 text-sm mt-1">${esc(s.description || 'بدون وصف')}</p>
                     </div>
@@ -397,7 +400,7 @@ app.get('/scripts', adminAuth, (req, res) => {
                     </div>
                 </div>
                 <div class="bg-gray-950 border border-gray-800 rounded-xl p-3 mb-3">
-                    <div class="text-xs text-gray-500 mb-2">🔗 loadstring مباشر:</div>
+                    <div class="text-xs text-gray-500 mb-2">🔗 loadstring — يشتغل بدون تعديل:</div>
                     <div class="flex items-center gap-2">
                         <code class="flex-1 text-emerald-400 text-xs overflow-x-auto whitespace-nowrap">${esc(loadCmd)}</code>
                         <button onclick="copyCmd('${esc(loadCmd).replace(/'/g, "\\'")}')" 
@@ -425,12 +428,24 @@ app.get('/scripts', adminAuth, (req, res) => {
             <div class="flex items-center justify-between flex-wrap gap-4">
                 <div>
                     <h1 class="text-2xl font-bold text-white">📜 السكربتات</h1>
-                    <p class="text-gray-500 text-sm mt-1">ارفع السكربت واحصل على loadstring مباشر</p>
+                    <p class="text-gray-500 text-sm mt-1">ارفع كود Luau كما هو — يتصل تلقائياً بالسيرفر</p>
                 </div>
                 <a href="/scripts/new" class="px-5 py-2.5 bg-gradient-to-r from-emerald-500 to-emerald-600 text-white font-bold rounded-xl">+ ارفع سكربت</a>
             </div>
         </header>
         <div class="p-6">
+            <div class="bg-blue-500/10 border border-blue-500/30 rounded-2xl p-4 mb-6">
+                <div class="flex items-start gap-3">
+                    <span class="text-2xl">✨</span>
+                    <div>
+                        <div class="font-bold text-blue-400 mb-1">الربط التلقائي مُفعّل</div>
+                        <div class="text-sm text-gray-300">
+                            السيرفر يحقن <code class="text-emerald-400">API_URL</code> و <code class="text-emerald-400">API_KEY</code> تلقائياً في السكربت.
+                            كل ما عليك رفعه كما هو — بدون تعديل يدوي.
+                        </div>
+                    </div>
+                </div>
+            </div>
             <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">${html}</div>
         </div>
         <script>
@@ -451,6 +466,18 @@ app.get('/scripts/new', adminAuth, (req, res) => {
             </div>
         </header>
         <div class="p-6">
+            <div class="bg-emerald-500/10 border border-emerald-500/30 rounded-2xl p-4 mb-6">
+                <div class="flex items-start gap-3">
+                    <span class="text-2xl">🔗</span>
+                    <div>
+                        <div class="font-bold text-emerald-400 mb-1">ربط تلقائي</div>
+                        <div class="text-sm text-gray-300">
+                            الصق السكربت <b>كما هو بدون تعديل</b>.
+                            السيرفر يحقن <code class="text-emerald-400">HOST_URL</code> و <code class="text-emerald-400">HOST_KEY</code> في بدايته تلقائياً.
+                        </div>
+                    </div>
+                </div>
+            </div>
             <form method="POST" action="/admin/scripts/save" class="bg-gray-900/60 border border-gray-800 rounded-2xl p-6 space-y-5">
                 <div>
                     <label class="block text-gray-300 text-sm font-semibold mb-2">اسم السكربت (إنجليزي بدون مسافات)</label>
@@ -460,14 +487,13 @@ app.get('/scripts/new', adminAuth, (req, res) => {
                 </div>
                 <div>
                     <label class="block text-gray-300 text-sm font-semibold mb-2">الوصف (اختياري)</label>
-                    <input type="text" name="description" placeholder="سكربت مقايضة السيارات v10"
+                    <input type="text" name="description" placeholder="سكربت مقايضة السيارات"
                         class="w-full px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-xl text-white">
                 </div>
                 <div>
-                    <label class="block text-gray-300 text-sm font-semibold mb-2">كود السكربت (Luau)</label>
-                    <textarea name="content" required rows="30" placeholder="-- الصق كود Trade Feed هنا"
+                    <label class="block text-gray-300 text-sm font-semibold mb-2">كود السكربت (Luau) — كما هو</label>
+                    <textarea name="content" required rows="30" placeholder="-- الصق كود السكربت هنا بدون تعديل"
                         class="w-full px-4 py-3 bg-gray-950 border border-gray-700 rounded-xl text-emerald-400 text-sm resize-y"></textarea>
-                    <p class="text-xs text-yellow-400 mt-2">⚠️ تذكر تغيير API_URL داخل السكربت للرابط الجديد!</p>
                 </div>
                 <div class="flex gap-3 pt-2">
                     <button type="submit" class="flex-1 py-3 bg-gradient-to-r from-emerald-500 to-emerald-600 text-white font-bold rounded-xl">💾 حفظ</button>
@@ -548,7 +574,7 @@ app.post('/admin/scripts/delete', adminAuth, (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════
-// 🚀 Loadstring endpoint
+// 🚀 Loadstring — Auto-Injection
 // ═══════════════════════════════════════════════════════
 app.get('/load/:name', (req, res) => {
     const s = scripts[req.params.name];
@@ -566,13 +592,42 @@ app.get('/load/:name', (req, res) => {
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Access-Control-Allow-Origin', '*');
 
-    const header = `-- ═══════════════════════════════════════════\n-- ${s.name}\n-- ${s.description || ''}\n-- Host: ${req.get('host')}\n-- Time: ${new Date().toISOString()}\n-- ═══════════════════════════════════════════\n\n`;
+    // ═══════════════════════════════════════════════════
+    // 🔗 INJECTION HEADER — يحقن API_URL تلقائياً
+    // ═══════════════════════════════════════════════════
+    const hostUrl = req.protocol + '://' + req.get('host');
+    const injection = `-- ═══════════════════════════════════════════
+-- ${s.name}
+-- ${s.description || ''}
+-- Server: ${hostUrl}
+-- Time: ${new Date().toISOString()}
+-- ═══════════════════════════════════════════
+-- 🔗 AUTO-INJECTED CONFIG
+-- ═══════════════════════════════════════════
+_G.HOST_URL = "${hostUrl}"
+_G.HOST_KEY = "${API_KEY}"
+-- ═══════════════════════════════════════════\n\n`;
 
-    res.send(header + s.content);
+    // ✅ نستبدل السطر API_URL في السكربت بالقيمة الجديدة تلقائياً
+    let modifiedContent = s.content;
+
+    // استبدال API_URL في CONFIG
+    modifiedContent = modifiedContent.replace(
+        /API_URL\s*=\s*["'][^"']*["']/g,
+        `API_URL = _G.HOST_URL`
+    );
+
+    // استبدال API_KEY
+    modifiedContent = modifiedContent.replace(
+        /API_KEY\s*=\s*["'][^"']*["']/g,
+        `API_KEY = _G.HOST_KEY`
+    );
+
+    res.send(injection + modifiedContent);
 });
 
 // ═══════════════════════════════════════════════════════
-// 🔌 APIs — يستقبل من Roblox
+// 🔌 APIs
 // ═══════════════════════════════════════════════════════
 app.get('/dashboard/stats', apiAuth, (req, res) => {
     res.json({
@@ -763,7 +818,6 @@ app.post('/api/dm/send', apiAuth, (req, res) => {
     totalMessages++;
     if (users[fromId]) users[fromId].messagesSent = (users[fromId].messagesSent || 0) + 1;
 
-    // تجاهل الإشارات الخاصة [[JOIN]] و [[LEFT]] في السجلات لتقليل الفوضى
     const msgStr = String(message).trim();
     if (msgStr !== '[[JOIN]]' && msgStr !== '[[LEFT]]') {
         addLog('dm', `${fromName} → ${toName}`);
@@ -1006,7 +1060,7 @@ if (require.main === module) {
     app.listen(PORT, () => {
         console.log('');
         console.log('╔══════════════════════════════════════════════╗');
-        console.log('║  🚀 Trade Host + Dashboard v3.0              ║');
+        console.log('║  🚀 Trade Host v4.0 — Auto-Injection         ║');
         console.log('╠══════════════════════════════════════════════╣');
         console.log(`║  🌐 http://localhost:${PORT}/dashboard`);
         console.log(`║  🔑 API: ${API_KEY}`);
