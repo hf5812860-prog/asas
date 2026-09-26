@@ -1,7 +1,6 @@
 {
-  "name": "roblox-custom-loader",
+  "name": "roblox-trade-dashboard",
   "version": "1.0.0",
-  "description": "Custom Roblox Script Loader with Dashboard",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
