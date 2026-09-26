@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════
-// Roblox Trade Host v7.0 — Per-Player Controls
+// Roblox Trade Host v8.0 — Data Receiver Only
 // ═══════════════════════════════════════════════════════
 const express      = require('express');
 const cookieParser = require('cookie-parser');
@@ -56,10 +56,7 @@ function addLog(type, message) {
 }
 
 function addTimeline() {
-    timeline.push({
-        time: Date.now(),
-        online: getOnlineUsers().length,
-    });
+    timeline.push({ time: Date.now(), online: getOnlineUsers().length });
     if (timeline.length > 60) timeline.shift();
 }
 
@@ -91,9 +88,7 @@ function esc(s) {
     return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-function validName(n) {
-    return /^[a-zA-Z0-9_\-]{1,64}$/.test(n);
-}
+function validName(n) { return /^[a-zA-Z0-9_\-]{1,64}$/.test(n); }
 
 function fmtNum(n) {
     const num = parseInt(n) || 0;
@@ -153,7 +148,7 @@ function layout({ title, page, content }) {
                 </div>
                 <div>
                     <div class="font-bold text-white">Trade Host</div>
-                    <div class="text-xs text-gray-500">v7.0</div>
+                    <div class="text-xs text-gray-500">v8.0</div>
                 </div>
             </div>
         </div>
@@ -313,7 +308,7 @@ app.get('/dashboard', adminAuth, (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════
-// 🟢 صفحة المتصلين — v7.0 — تحكم تحت كل لاعب
+// 🟢 صفحة المتصلين
 // ═══════════════════════════════════════════════════════
 app.get('/players', adminAuth, (req, res) => {
     const list = Object.values(users).sort((a, b) => b.lastSeen - a.lastSeen);
@@ -322,11 +317,8 @@ app.get('/players', adminAuth, (req, res) => {
         ? '<tr><td colspan="3" class="text-center py-12 text-gray-500">لا يوجد لاعبين مسجلين</td></tr>'
         : list.map(u => {
             const online = isOnline(u);
-            const hasMoney = (u.money && u.money > 0) || (u.bank && u.bank > 0);
-            
             return `
             <tr class="border-t border-gray-800 hover:bg-gray-800/30 ${online ? '' : 'opacity-60'}">
-                <!-- العمود الأول: معلومات اللاعب -->
                 <td class="p-4 align-top" style="width: 250px;">
                     <div class="flex items-center gap-3">
                         <img src="https://www.roblox.com/headshot-thumbnail/image?userId=${u.robloxId}&width=150&height=150&format=png"
@@ -341,8 +333,7 @@ app.get('/players', adminAuth, (req, res) => {
                     </div>
                 </td>
 
-                <!-- العمود الثاني: الفلوس والإحصائيات -->
-                <td class="p-4 align-top" style="width: 300px;">
+                <td class="p-4 align-top" style="width: 350px;">
                     <div class="grid grid-cols-2 gap-3">
                         <div class="bg-emerald-500/10 border border-emerald-500/30 rounded-lg p-3">
                             <div class="text-xs text-gray-400 mb-1">💵 الفلوس باليد</div>
@@ -362,14 +353,12 @@ app.get('/players', adminAuth, (req, res) => {
                         </div>
                     </div>
                     <div class="mt-2 text-xs text-gray-500">
-                        الوظيفة الحالية: <span class="text-white">${esc(u.currentJob || 'None')}</span>
+                        الوظيفة: <span class="text-white">${esc(u.currentJob || 'None')}</span>
                     </div>
                 </td>
 
-                <!-- العمود الثالث: التحكم -->
                 <td class="p-4 align-top" style="width: 350px;">
                     <div class="space-y-2">
-                        <!-- الصف الأول: Rejoin + Hop -->
                         <div class="grid grid-cols-2 gap-2">
                             <form method="POST" action="/admin/player/command" class="contents">
                                 <input type="hidden" name="userId" value="${u.robloxId}">
@@ -382,14 +371,13 @@ app.get('/players', adminAuth, (req, res) => {
                                 <input type="hidden" name="userId" value="${u.robloxId}">
                                 <input type="hidden" name="cmd" value="hop">
                                 <button type="submit" class="py-2 bg-purple-500/20 hover:bg-purple-500/30 border border-purple-500/30 text-purple-400 rounded-lg font-semibold text-xs">
-                                    🚀 Hop Server
+                                    🚀 Hop
                                 </button>
                             </form>
                         </div>
 
-                        <!-- الصف الثاني: الوظائف -->
                         <div class="bg-gray-800/50 rounded-lg p-2">
-                            <div class="text-xs text-gray-400 mb-2">⚙️ تغيير الوظيفة:</div>
+                            <div class="text-xs text-gray-400 mb-2">⚙️ الوظائف:</div>
                             <div class="grid grid-cols-5 gap-1">
                                 <form method="POST" action="/admin/player/command" class="contents">
                                     <input type="hidden" name="userId" value="${u.robloxId}">
@@ -428,7 +416,7 @@ app.get('/players', adminAuth, (req, res) => {
             <div class="flex items-center justify-between flex-wrap gap-4">
                 <div>
                     <h1 class="text-2xl font-bold text-white">🟢 المتصلين</h1>
-                    <p class="text-gray-500 text-sm mt-1">تحكم كامل بكل لاعب</p>
+                    <p class="text-gray-500 text-sm mt-1">بيانات مباشرة من اللعبة</p>
                 </div>
                 <div class="flex gap-3 text-sm">
                     <span class="px-3 py-2 bg-emerald-500/10 border border-emerald-500/30 rounded-lg text-emerald-400">
@@ -448,7 +436,7 @@ app.get('/players', adminAuth, (req, res) => {
                         <thead class="bg-gray-800/50">
                             <tr>
                                 <th class="text-right p-4 text-gray-400 font-semibold">اللاعب</th>
-                                <th class="text-right p-4 text-gray-400 font-semibold">الإحصائيات</th>
+                                <th class="text-right p-4 text-gray-400 font-semibold">البيانات</th>
                                 <th class="text-right p-4 text-gray-400 font-semibold">التحكم</th>
                             </tr>
                         </thead>
@@ -523,12 +511,23 @@ app.get('/scripts', adminAuth, (req, res) => {
             <div class="flex items-center justify-between flex-wrap gap-4">
                 <div>
                     <h1 class="text-2xl font-bold text-white">📜 السكربتات</h1>
-                    <p class="text-gray-500 text-sm mt-1">ارفع كود Luau كما هو</p>
+                    <p class="text-gray-500 text-sm mt-1">ارفع كود Luau كما هو — بدون تعديل</p>
                 </div>
                 <a href="/scripts/new" class="px-5 py-2.5 bg-gradient-to-r from-emerald-500 to-emerald-600 text-white font-bold rounded-xl">+ ارفع سكربت</a>
             </div>
         </header>
         <div class="p-6">
+            <div class="bg-blue-500/10 border border-blue-500/30 rounded-2xl p-4 mb-6">
+                <div class="flex items-start gap-3">
+                    <span class="text-2xl">ℹ️</span>
+                    <div>
+                        <div class="font-bold text-blue-400 mb-1">بدون تعديل تلقائي</div>
+                        <div class="text-sm text-gray-300">
+                            السيرفر يرسل السكربت كما هو بالضبط. ما في حقن ولا تعديل.
+                        </div>
+                    </div>
+                </div>
+            </div>
             <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">${html}</div>
         </div>
         <script>
@@ -557,12 +556,12 @@ app.get('/scripts/new', adminAuth, (req, res) => {
                 </div>
                 <div>
                     <label class="block text-gray-300 text-sm font-semibold mb-2">الوصف</label>
-                    <input type="text" name="description" placeholder="Mercy Hub Multi-Farm"
+                    <input type="text" name="description" placeholder="Mercy Hub"
                         class="w-full px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-xl text-white">
                 </div>
                 <div>
                     <label class="block text-gray-300 text-sm font-semibold mb-2">كود السكربت (Luau)</label>
-                    <textarea name="content" required rows="30" placeholder="-- الصق كود السكربت هنا"
+                    <textarea name="content" required rows="30" placeholder="-- الصق كود السكربت هنا كما هو"
                         class="w-full px-4 py-3 bg-gray-950 border border-gray-700 rounded-xl text-emerald-400 text-sm resize-y"></textarea>
                 </div>
                 <div class="flex gap-3 pt-2">
@@ -644,7 +643,7 @@ app.post('/admin/scripts/delete', adminAuth, (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════
-// 🚀 Loadstring — بدون حقن
+// 🚀 Loadstring — يرسل السكربت كما هو بدون تعديل
 // ═══════════════════════════════════════════════════════
 app.get('/load/:name', (req, res) => {
     const s = scripts[req.params.name];
@@ -661,13 +660,15 @@ app.get('/load/:name', (req, res) => {
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Access-Control-Allow-Origin', '*');
 
+    // ✅ يرسل السكربت كما هو بالضبط — بدون أي حقن
     res.send(s.content);
 });
 
 // ═══════════════════════════════════════════════════════
-// 🔌 APIs
+// 🔌 APIs — يستقبل من Roblox
 // ═══════════════════════════════════════════════════════
 
+// التسجيل
 app.post('/api/register', apiAuth, (req, res) => {
     const { robloxId, username, jobId } = req.body;
     if (!robloxId) return res.status(400).json({ error: 'Missing robloxId' });
@@ -689,10 +690,10 @@ app.post('/api/register', apiAuth, (req, res) => {
     res.json({ success: true });
 });
 
-// نبضة + استقبال الإحصائيات + إرسال الأوامر
+// Heartbeat — يستقبل كل البيانات + يرسل الأوامر
 app.post('/api/heartbeat', apiAuth, (req, res) => {
     const { robloxId, username, jobId, money, bank, level, currentJob, farmMode,
-            autoFarmATM, autoFarmJob, autoFarmFishing, selectedJob, uptime } = req.body;
+            selectedJob, uptime } = req.body;
 
     if (!robloxId) return res.status(400).json({ error: 'Missing robloxId' });
 
@@ -709,6 +710,7 @@ app.post('/api/heartbeat', apiAuth, (req, res) => {
         addLog('register', `${username || robloxId} انضم`);
     }
 
+    // ✅ استقبل كل شي يرسله السكربت
     users[robloxId].lastSeen = Date.now();
     if (username) users[robloxId].username = username;
     if (jobId) users[robloxId].jobId = jobId;
@@ -719,7 +721,7 @@ app.post('/api/heartbeat', apiAuth, (req, res) => {
     if (farmMode) users[robloxId].farmMode = farmMode;
     if (typeof uptime === 'number') users[robloxId].uptime = uptime;
 
-    // سحب الأوامر المعلقة
+    // ✅ الأوامر المعلقة
     const pendingCmds = commands[robloxId] || [];
     commands[robloxId] = [];
 
@@ -744,20 +746,6 @@ app.post('/admin/player/command', adminAuth, (req, res) => {
     res.redirect('/players');
 });
 
-app.post('/admin/broadcast/command', adminAuth, (req, res) => {
-    const { cmd } = req.body;
-    if (!cmd) return res.redirect('/players');
-
-    const online = getOnlineUsers();
-    for (const u of online) {
-        if (!commands[u.robloxId]) commands[u.robloxId] = [];
-        commands[u.robloxId].push(cmd);
-    }
-
-    addLog('command', `📢 أمر جماعي "${cmd}" → ${online.length} لاعب`);
-    res.redirect('/players');
-});
-
 // ═══════════════════════════════════════════════════════
 // 🧹 Cleanup
 // ═══════════════════════════════════════════════════════
@@ -779,7 +767,7 @@ if (require.main === module) {
     app.listen(PORT, () => {
         console.log('');
         console.log('╔══════════════════════════════════════════════╗');
-        console.log('║  🚀 Trade Host v7.0 — Per-Player Controls    ║');
+        console.log('║  🚀 Trade Host v8.0 — Receiver Only          ║');
         console.log('╠══════════════════════════════════════════════╣');
         console.log(`║  🌐 http://localhost:${PORT}/dashboard`);
         console.log(`║  🔑 API: ${API_KEY}`);
