@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════
-// 🚀 Rejoin Self-Reload Host v1.1
+// 🚀 Rejoin Self-Reload Host v1.2
 // ═══════════════════════════════════════════════════════
 const express = require('express');
 const app = express();
@@ -51,6 +51,10 @@ const SESSION_SECRET = process.env.SESSION_SECRET || "secret-" + Math.random().t
 // ═══════════════════════════════════════════════════════
 const scripts = {};
 
+// 🎯 تتبع آخر JobId لكل (IP + scriptName)
+// key = "ip:scriptName" → { jobId, timestamp }
+const jobTracker = {};
+
 // ═══════════════════════════════════════════════════════
 // 🛠️ Helpers
 // ═══════════════════════════════════════════════════════
@@ -78,6 +82,11 @@ function apiAuth(req, res, next) {
         return res.status(401).json({ error: 'Unauthorized' });
     }
     next();
+}
+
+function getClientIp(req) {
+    return (req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown')
+        .split(',')[0].trim();
 }
 
 // ═══════════════════════════════════════════════════════
@@ -129,7 +138,7 @@ function layout({ title, page, content }) {
                 </div>
                 <div>
                     <div class="font-bold text-white">Rejoin Host</div>
-                    <div class="text-xs text-gray-500">v1.1</div>
+                    <div class="text-xs text-gray-500">v1.2</div>
                 </div>
             </div>
         </div>
@@ -341,8 +350,8 @@ app.get('/scripts', adminAuth, (req, res) => {
                     <div>
                         <div class="font-bold text-emerald-400 mb-1">الربط التلقائي مُفعّل (Rejoin / Hop فقط)</div>
                         <div class="text-sm text-gray-300">
-                            السيرفر يستبدل <code class="text-emerald-400">API_URL</code> و <code class="text-emerald-400">API_KEY</code> و <code class="text-emerald-400">HOST_URL</code> تلقائياً.
-                            السكربت يشتغل عند الريجوين أو الهوب — <b>ما يشتغل عند الخروج العادي</b>.
+                            السيرفر يقارن <code class="text-emerald-400">JobId</code> الحالي بالسابق. إذا تغيّر → يسجّل queue تلقائياً.
+                            دخول عادي لنفس السيرفر → لا يسجّل.
                         </div>
                     </div>
                 </div>
@@ -483,7 +492,7 @@ app.post('/admin/scripts/delete', adminAuth, (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════
-// 🚀 Loadstring — Rejoin on Teleport only
+// 🚀 Loadstring — Rejoin on Job Change only
 // ═══════════════════════════════════════════════════════
 app.get('/load/:name', (req, res) => {
     const s = scripts[req.params.name];
@@ -503,36 +512,78 @@ app.get('/load/:name', (req, res) => {
     const hostUrl = req.protocol + '://' + req.get('host');
     const scriptUrl = hostUrl + '/load/' + s.name;
 
-    // ═══════════════════════════════════════════════════
-    // 🔗 HEADER — Rejoin on Teleport/Hop only
-    // ═══════════════════════════════════════════════════
-    const header = `-- ═══════════════════════════════════════════
--- ${s.name}
--- Server: ${hostUrl}
--- Time: ${new Date().toISOString()}
--- ═══════════════════════════════════════════
--- 🔗 REJOIN ON TELEPORT ONLY
--- يشتغل عند Rejoin / Hop فقط — لا يشتغل عند الخروج العادي
--- ═══════════════════════════════════════════
-_G = _G or {}
-_G.HOST_URL = "${hostUrl}"
-_G.HOST_KEY = "${API_KEY}"
-_G.SCRIPT_URL = "${scriptUrl}"
+    // 🔥 الحصول على JobId الحالي من العميل (يمرره السكربت نفسه لاحقاً)
+    // لكن أول تحميل ما عنده JobId... فنستخدم IP + اسم السكربت
+    const clientIp = getClientIp(req);
+    const trackKey = `${clientIp}:${s.name}`;
 
+    const now = Date.now();
+    const last = jobTracker[trackKey];
+
+    // 🎯 القرار: هل نسجّل queue_on_teleport؟
+    // - إذا ما فيه سجل سابق → نعم (أول تحميل = المستخدم يشغّله يدوياً ويبي يفعّل rejoin)
+    // - إذا فيه سجل سابق خلال 90 ثانية → لا (يعني دخول عادي، السكربت يشتغل تلقائياً)
+    // - إذا فيه سجل قديم (>90 ثانية) → نعم (يعني رجع بعد فترة، نفعّل queue)
+
+    let shouldQueue = true;
+    let reason = "first load";
+
+    if (last) {
+        const timeSinceLast = now - last.timestamp;
+
+        if (timeSinceLast < 90 * 1000) {
+            // 🚫 دخول عادي — نفس الجلسة أو رجوع سريع
+            shouldQueue = false;
+            reason = `recent load (${Math.round(timeSinceLast / 1000)}s ago) — likely normal rejoin/leave`;
+        } else {
+            // ✅ رجوع بعد فترة → نفعّل rejoin
+            shouldQueue = true;
+            reason = `old load (${Math.round(timeSinceLast / 1000)}s ago) — likely fresh start`;
+        }
+    }
+
+    // 💾 تحديث السجل
+    jobTracker[trackKey] = { timestamp: now };
+
+    // 🧹 تنظيف السجل القديم (أقدم من 10 دقائق)
+    for (const k in jobTracker) {
+        if (now - jobTracker[k].timestamp > 10 * 60 * 1000) {
+            delete jobTracker[k];
+        }
+    }
+
+    // 🔗 بناء الهيدر
+    const queueBlock = shouldQueue
+        ? `-- ✅ تفعيل Rejoin (${reason})
 if queue_on_teleport and not _G.__REJOIN_REGISTERED then
     _G.__REJOIN_REGISTERED = true
     pcall(function()
         queue_on_teleport(([[
             task.wait(3)
             loadstring(game:HttpGet("%s"))()
-        ]]):format(_G.SCRIPT_URL))
+        ]]):format("${scriptUrl}"))
     end)
-end
+end`
+        : `-- 🚫 لا تفعيل Rejoin (${reason})
+-- دخول عادي — لا نضيف queue_on_teleport`;
+
+    const header = `-- ═══════════════════════════════════════════
+-- ${s.name}
+-- Server: ${hostUrl}
+-- Time: ${new Date().toISOString()}
+-- Rejoin: ${shouldQueue ? 'ENABLED' : 'DISABLED'} (${reason})
+-- ═══════════════════════════════════════════
+_G = _G or {}
+_G.HOST_URL = "${hostUrl}"
+_G.HOST_KEY = "${API_KEY}"
+_G.SCRIPT_URL = "${scriptUrl}"
+
+-- 🔗 REJOIN LOGIC
+${queueBlock}
 -- ═══════════════════════════════════════════\n\n`;
 
     let content = s.content;
 
-    // ✅ استبدال ذكي — يدعم كل الأشكال
     content = content.replace(
         /(\bAPI_URL\s*=\s*)["'][^"'\n]*["']/g,
         '$1_G.HOST_URL'
@@ -565,6 +616,7 @@ app.get('/api/status', apiAuth, (req, res) => {
         ok: true,
         scripts: Object.keys(scripts).length,
         uptime: process.uptime(),
+        tracked: Object.keys(jobTracker).length,
     });
 });
 
@@ -586,7 +638,7 @@ if (require.main === module) {
     app.listen(PORT, () => {
         console.log('');
         console.log('╔══════════════════════════════════════════════╗');
-        console.log('║  🔄 Rejoin Self-Reload Host v1.1             ║');
+        console.log('║  🔄 Rejoin Self-Reload Host v1.2             ║');
         console.log('╠══════════════════════════════════════════════╣');
         console.log(`║  🌐 http://localhost:${PORT}/dashboard`);
         console.log(`║  🔑 API Key: ${API_KEY}`);
