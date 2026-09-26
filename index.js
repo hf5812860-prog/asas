@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════
-// Roblox Script Host v6.0 — Clean (بدون سوق سيارات)
+// Roblox Script Host v6.0 — Clean Edition
 // ═══════════════════════════════════════════════════════
 const express      = require('express');
 const cookieParser = require('cookie-parser');
@@ -33,10 +33,10 @@ const API_KEY        = process.env.API_KEY        || "JXZXCV";
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admin123";
 const SESSION_SECRET = process.env.SESSION_SECRET || "secret-change-me";
 const START_TIME     = Date.now();
-const ONLINE_TIMEOUT = 60 * 1000;
+const ONLINE_TIMEOUT = 90 * 1000; // 90 ثانية — يسامح لو تأخر heartbeat
 
 // ═══════════════════════════════════════════════════════
-// 🗄️ Database (ذاكرة فقط)
+// 🗄️ Database (ذاكرة)
 // ═══════════════════════════════════════════════════════
 const scripts  = {};
 const users    = {};
@@ -57,10 +57,7 @@ function addLog(type, message) {
 }
 
 function addTimeline() {
-    timeline.push({
-        time: Date.now(),
-        online: getOnlineUsers().length,
-    });
+    timeline.push({ time: Date.now(), online: getOnlineUsers().length });
     if (timeline.length > 60) timeline.shift();
 }
 
@@ -71,7 +68,9 @@ function adminAuth(req, res, next) {
 }
 
 function apiAuth(req, res, next) {
-    if (req.headers['x-api-key'] !== API_KEY) return res.status(401).json({ error: 'Unauthorized' });
+    // يقبل من الهيدر أو من query string (عشان السكربتات)
+    const key = req.headers['x-api-key'] || req.query.key;
+    if (key !== API_KEY) return res.status(401).json({ error: 'Unauthorized' });
     next();
 }
 
@@ -87,9 +86,7 @@ function esc(s) {
     return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-function validName(n) {
-    return /^[a-zA-Z0-9_\-]{1,64}$/.test(n);
-}
+function validName(n) { return /^[a-zA-Z0-9_\-]{1,64}$/.test(n); }
 
 setInterval(addTimeline, 10000);
 
@@ -135,7 +132,6 @@ function layout({ title, page, content }) {
 </style>
 </head>
 <body class="min-h-screen text-gray-200">
-
 <div class="flex min-h-screen">
     <aside class="w-64 bg-gray-900/80 border-l border-gray-800 flex-shrink-0 hidden md:flex md:flex-col">
         <div class="p-6 border-b border-gray-800">
@@ -159,7 +155,6 @@ function layout({ title, page, content }) {
     </aside>
     <main class="flex-1 overflow-auto">${content}</main>
 </div>
-
 </body>
 </html>`;
 }
@@ -339,10 +334,10 @@ app.get('/scripts', adminAuth, (req, res) => {
                     </div>
                 </div>
                 <div class="bg-gray-950 border border-gray-800 rounded-xl p-3 mb-3">
-                    <div class="text-xs text-gray-500 mb-2">🔗 loadstring — يشتغل بدون تعديل:</div>
+                    <div class="text-xs text-gray-500 mb-2">🔗 loadstring:</div>
                     <div class="flex items-center gap-2">
                         <code class="flex-1 text-emerald-400 text-xs overflow-x-auto whitespace-nowrap">${esc(loadCmd)}</code>
-                        <button onclick="copyCmd('${esc(loadCmd).replace(/'/g, "\\'")}')" 
+                        <button onclick="copyCmd('${esc(loadCmd).replace(/'/g, "\\'")}')"
                                 class="px-3 py-1.5 bg-blue-500/20 text-blue-400 rounded-lg text-xs font-semibold whitespace-nowrap">📋 نسخ</button>
                     </div>
                 </div>
@@ -379,8 +374,7 @@ app.get('/scripts', adminAuth, (req, res) => {
                     <div>
                         <div class="font-bold text-blue-400 mb-1">الربط التلقائي مُفعّل</div>
                         <div class="text-sm text-gray-300">
-                            السيرفر يستبدل <code class="text-emerald-400">API_URL</code> و <code class="text-emerald-400">API_KEY</code> تلقائياً.
-                            لا حاجة لتعديل يدوي.
+                            السيرفر يستبدل <code class="text-emerald-400">HOST_URL</code> و <code class="text-emerald-400">HOST_KEY</code> تلقائياً.
                         </div>
                     </div>
                 </div>
@@ -429,7 +423,7 @@ app.get('/scripts/new', adminAuth, (req, res) => {
                 </div>
                 <div>
                     <label class="block text-gray-300 text-sm font-semibold mb-2">كود السكربت (Luau)</label>
-                    <textarea name="content" required rows="30" placeholder="-- الصق كود السكربت هنا كما هو"
+                    <textarea name="content" required rows="30" placeholder="-- الصق كود السكربت هنا"
                         class="w-full px-4 py-3 bg-gray-950 border border-gray-700 rounded-xl text-emerald-400 text-sm resize-y"></textarea>
                 </div>
                 <div class="flex gap-3 pt-2">
@@ -535,17 +529,19 @@ app.get('/load/:name', (req, res) => {
 -- ${s.name}
 -- Server: ${hostUrl}
 -- Time: ${new Date().toISOString()}
--- ═══════════════════════════════════════════
 -- 🔗 AUTO-INJECTED
 -- ═══════════════════════════════════════════
 _G = _G or {}
 _G.HOST_URL = "${hostUrl}"
 _G.HOST_KEY = "${API_KEY}"
+_G.SCRIPT_NAME = "${s.name}"
 -- ═══════════════════════════════════════════\n\n`;
 
     let content = s.content;
 
-    // استبدال تلقائي للروابط
+    // استبدال تلقائي للروابط القديمة
+    content = content.replace(/(\bHOST_URL\s*=\s*)(_G\.HOST_URL\s*or\s*)?["'][^"'\n]*["']/g, '$1_G.HOST_URL or "http://localhost:3000"');
+    content = content.replace(/(\bHOST_KEY\s*=\s*)(_G\.HOST_KEY\s*or\s*)?["'][^"'\n]*["']/g, '$1_G.HOST_KEY or ""');
     content = content.replace(/(\bAPI_URL\s*=\s*)["'][^"'\n]*["']/g, '$1_G.HOST_URL');
     content = content.replace(/(\bAPI_KEY\s*=\s*)["'][^"'\n]*["']/g, '$1_G.HOST_KEY');
     content = content.replace(/(\bBASE_URL\s*=\s*)["'][^"'\n]*["']/g, '$1_G.HOST_URL');
@@ -554,7 +550,7 @@ _G.HOST_KEY = "${API_KEY}"
 });
 
 // ═══════════════════════════════════════════════════════
-// 🔌 APIs (تسجيل + heartbeat فقط)
+// 🔌 APIs — Heartbeat & Register
 // ═══════════════════════════════════════════════════════
 app.get('/dashboard/stats', apiAuth, (req, res) => {
     res.json({
@@ -566,31 +562,50 @@ app.get('/dashboard/stats', apiAuth, (req, res) => {
     });
 });
 
+// ✅ يقبل robloxId أو userId
+function extractUser(body) {
+    const id = body.robloxId || body.userId || body.userid || body.RobloxId;
+    const name = body.username || body.name || body.UserName || 'Unknown';
+    return { id: id ? parseInt(id) : null, name: String(name) };
+}
+
 app.post('/api/register', apiAuth, (req, res) => {
-    const { robloxId, username, jobId } = req.body;
-    if (!robloxId) return res.status(400).json({ error: 'Missing robloxId' });
-    const isNew = !users[robloxId];
-    users[robloxId] = {
-        robloxId: parseInt(robloxId),
-        username: username || 'Unknown',
+    const { id, name } = extractUser(req.body);
+    if (!id) return res.status(400).json({ error: 'Missing robloxId/userId' });
+    const { jobId } = req.body;
+    const isNew = !users[id];
+    users[id] = {
+        robloxId: id,
+        username: name,
         jobId: jobId || '',
         lastSeen: Date.now(),
-        joinedAt: users[robloxId]?.joinedAt || Date.now(),
+        joinedAt: users[id]?.joinedAt || Date.now(),
     };
-    if (isNew) addLog('register', `👤 ${username} سجل دخول`);
+    if (isNew) addLog('register', `👤 ${name} سجل دخول`);
     res.json({ success: true });
 });
 
 app.post('/api/heartbeat', apiAuth, (req, res) => {
-    const { robloxId, jobId } = req.body;
-    if (!robloxId) return res.status(400).json({ error: 'Missing robloxId' });
-    if (!users[robloxId]) {
-        users[robloxId] = { robloxId: parseInt(robloxId), username: 'Unknown', jobId: jobId || '', lastSeen: Date.now() };
+    const { id, name } = extractUser(req.body);
+    if (!id) return res.status(400).json({ error: 'Missing robloxId/userId' });
+
+    const { jobId } = req.body;
+
+    if (!users[id]) {
+        users[id] = {
+            robloxId: id,
+            username: name,
+            jobId: jobId || '',
+            lastSeen: Date.now(),
+            joinedAt: Date.now(),
+        };
+        addLog('register', `👤 ${name} اتصل (heartbeat)`);
     } else {
-        users[robloxId].lastSeen = Date.now();
-        if (jobId) users[robloxId].jobId = jobId;
+        users[id].lastSeen = Date.now();
+        users[id].username = name; // حدّث الاسم
+        if (jobId) users[id].jobId = jobId;
     }
-    res.json({ success: true });
+    res.json({ success: true, time: Date.now() });
 });
 
 // ═══════════════════════════════════════════════════════
@@ -670,7 +685,7 @@ app.get('/logs', adminAuth, (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════
-// 🧹 Cleanup (المستخدمين المنتهيين)
+// 🧹 Cleanup
 // ═══════════════════════════════════════════════════════
 setInterval(() => {
     const now = Date.now();
