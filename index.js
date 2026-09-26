@@ -76,6 +76,14 @@ function timeAgo(ms) {
   if (m < 60) return m + " د";
   return Math.floor(m / 60) + " س";
 }
+function getHost(req) {
+  const proto = (req.headers["x-forwarded-proto"] || req.protocol || "https").split(",")[0];
+  const host = req.headers["x-forwarded-host"] || req.get("host");
+  return proto + "://" + host;
+}
+function loadSnippet(host, name) {
+  return `loadstring(game:HttpGet("${host}/load/${name}"))()`;
+}
 function queueCmd(userId, command) {
   const uid = String(userId);
   if (!commandQueue[uid]) commandQueue[uid] = [];
@@ -199,7 +207,7 @@ app.get("/dashboard", adminAuth, (req, res) => {
         </div>
         <div class="bg-blue-500/10 border border-blue-500/30 rounded-2xl p-5 text-sm text-gray-300 space-y-1">
           <div>1) ارفع السكربت من <a class="text-blue-400" href="/scripts/new">/scripts/new</a></div>
-          <div>2) اللاعب يشغّل: <code class="text-blue-400">loadstring(game:HttpGet("YOUR_URL/load/NAME"))()</code></div>
+          <div>2) بعد الحفظ انسخ أمر loadstring الكامل من صفحة السكربتات (فيه رابط موقعك)</div>
           <div>3) يظهر هنا خلال ثواني — تتحكم فيه من تبويب اللاعبين</div>
         </div>
       </div>
@@ -316,21 +324,34 @@ app.get("/players", adminAuth, (req, res) => {
 });
 
 app.get("/scripts", adminAuth, (req, res) => {
+  const host = getHost(req);
+  const saved = req.query.saved;
   const items = Object.values(scripts);
+  const savedBox = saved && scripts[saved]
+    ? `<div class="mb-6 p-5 bg-emerald-500/10 border border-emerald-500/30 rounded-2xl">
+        <div class="font-bold text-emerald-400 mb-2">السكربت جاهز — انسخ هذا كامل في الإكسكيوتر</div>
+        <textarea readonly class="w-full px-3 py-3 bg-gray-950 border border-gray-700 rounded-xl text-emerald-300 text-sm font-mono" id="copybox">${esc(loadSnippet(host, saved))}</textarea>
+        <button onclick="navigator.clipboard.writeText(document.getElementById('copybox').value)" class="mt-3 px-4 py-2 bg-emerald-600 rounded-lg text-sm">نسخ</button>
+      </div>`
+    : "";
   const html = items.length
     ? items
-        .map(
-          (s) => `<div class="bg-gray-900 border border-gray-800 rounded-2xl p-5 mb-3 flex justify-between items-center flex-wrap gap-3">
-        <div><div class="font-bold text-white">${esc(s.name)}</div>
-        <div class="text-xs text-gray-500">${esc(s.description || "")} • ${s.loads || 0} تحميل</div>
-        <code class="text-xs text-blue-400">loadstring(game:HttpGet("${esc((process.env.PUBLIC_URL || "") + "/load/" + s.name)}"))()</code>
+        .map((s) => {
+          const snip = loadSnippet(host, s.name);
+          return `<div class="bg-gray-900 border border-gray-800 rounded-2xl p-5 mb-3">
+        <div class="flex justify-between items-center flex-wrap gap-3 mb-3">
+          <div><div class="font-bold text-white">${esc(s.name)}</div>
+          <div class="text-xs text-gray-500">${esc(s.description || "")} • ${s.loads || 0} تحميل</div></div>
+          <div class="flex gap-2">
+            <a class="px-3 py-2 bg-blue-600 rounded-lg text-sm" href="/scripts/edit/${encodeURIComponent(s.name)}">تعديل</a>
+            <form method="POST" action="/admin/scripts/delete"><input type="hidden" name="name" value="${esc(s.name)}">
+            <button class="px-3 py-2 bg-red-700 rounded-lg text-sm">حذف</button></form>
+          </div>
         </div>
-        <div class="flex gap-2">
-          <a class="px-3 py-2 bg-blue-600 rounded-lg text-sm" href="/scripts/edit/${encodeURIComponent(s.name)}">تعديل</a>
-          <form method="POST" action="/admin/scripts/delete"><input type="hidden" name="name" value="${esc(s.name)}">
-          <button class="px-3 py-2 bg-red-700 rounded-lg text-sm">حذف</button></form>
-        </div></div>`
-        )
+        <div class="text-xs text-gray-400 mb-1">شغّل هذا كامل في اللعبة:</div>
+        <input readonly class="w-full px-3 py-2 bg-gray-950 border border-gray-700 rounded-xl text-emerald-300 text-xs font-mono" value="${esc(snip)}" onclick="this.select()">
+      </div>`;
+        })
         .join("")
     : `<div class="text-gray-500">ما في سكربتات</div>`;
 
@@ -341,7 +362,7 @@ app.get("/scripts", adminAuth, (req, res) => {
       content: `<header class="bg-gray-900/60 border-b border-gray-800 p-6 flex justify-between">
         <h1 class="text-2xl font-bold">📜 السكربتات</h1>
         <a href="/scripts/new" class="px-5 py-2.5 bg-emerald-600 rounded-xl font-bold">+ ارفع سكربت</a>
-      </header><div class="p-6">${html}</div>`,
+      </header><div class="p-6">${savedBox}${html}</div>`,
     })
   );
 });
@@ -388,7 +409,7 @@ app.post("/admin/scripts/save", adminAuth, (req, res) => {
     createdAt: (scripts[name] && scripts[name].createdAt) || Date.now(),
     loads: (scripts[name] && scripts[name].loads) || 0,
   };
-  res.redirect("/scripts");
+  res.redirect("/scripts?saved=" + encodeURIComponent(name));
 });
 app.post("/admin/scripts/delete", adminAuth, (req, res) => {
   if (scripts[req.body.name]) delete scripts[req.body.name];
@@ -590,7 +611,7 @@ app.get("/load/:name", (req, res) => {
   const s = scripts[req.params.name];
   if (!s) return res.status(404).type("text/plain").send('warn("[HOST] script not found")');
   s.loads = (s.loads || 0) + 1;
-  const hostUrl = (req.headers["x-forwarded-proto"] || req.protocol) + "://" + req.get("host");
+  const hostUrl = getHost(req);
   const scriptUrl = hostUrl + "/load/" + s.name;
   const header = `-- ${s.name}\n_G.HOST_URL="${hostUrl}"\n_G.HOST_KEY="${API_KEY}"\n_G.SCRIPT_NAME="${s.name}"\n\n`;
   res.setHeader("Content-Type", "text/plain; charset=utf-8");
