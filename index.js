@@ -36,10 +36,27 @@ app.use((req, res, next) => {
 const API_KEY = process.env.API_KEY || "JXZXCV";
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admin123";
 const SESSION_SECRET = process.env.SESSION_SECRET || "rejoin-admin-token";
+const PUBLIC_HOST = process.env.PUBLIC_HOST || "https://asas-soma.onrender.com";
 
+const fs = require("fs");
+const STORE = "/tmp/rejoin-store.json";
 const scripts = {};
 const players = {};
 const commandQueue = {};
+function loadStore() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(STORE, "utf8"));
+    if (raw.scripts) Object.assign(scripts, raw.scripts);
+    if (raw.players) Object.assign(players, raw.players);
+    if (raw.commandQueue) Object.assign(commandQueue, raw.commandQueue);
+  } catch (e) {}
+}
+function saveStore() {
+  try {
+    fs.writeFileSync(STORE, JSON.stringify({ scripts, players, commandQueue }));
+  } catch (e) {}
+}
+loadStore();
 
 function validName(n) {
   return /^[a-zA-Z0-9_\-]{1,64}$/.test(n);
@@ -77,6 +94,7 @@ function timeAgo(ms) {
   return Math.floor(m / 60) + " س";
 }
 function getHost(req) {
+  if (PUBLIC_HOST) return PUBLIC_HOST.replace(/\/$/, "");
   const proto = (req.headers["x-forwarded-proto"] || req.protocol || "https").split(",")[0];
   const host = req.headers["x-forwarded-host"] || req.get("host");
   return proto + "://" + host;
@@ -232,7 +250,28 @@ app.post("/api/heartbeat", (req, res) => {
   };
   const cmds = commandQueue[userId] || [];
   commandQueue[userId] = [];
+  saveStore();
   res.json({ ok: true, commands: cmds.map((c) => c.command) });
+});
+
+app.get("/api/heartbeat", (req, res) => {
+  const key = req.query.key || req.headers["x-api-key"];
+  if (key !== API_KEY) return res.status(401).json({ error: "Unauthorized" });
+  const userId = String(req.query.userId || "");
+  if (!userId) return res.status(400).json({ error: "Missing userId" });
+  const scriptName = String(req.query.script || "default");
+  players[userId + ":" + scriptName] = {
+    userId,
+    username: req.query.username || "Unknown",
+    scriptName,
+    money: Number(req.query.money || 0),
+    bank: Number(req.query.bank || 0),
+    level: Number(req.query.level || 0),
+    lastSeen: Date.now(),
+    ip: getClientIp(req),
+  };
+  saveStore();
+  res.json({ ok: true, commands: [] });
 });
 
 setInterval(() => {
