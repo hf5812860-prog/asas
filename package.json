@@ -1,16 +1,16 @@
 {
-  "name": "roblox-script-host",
+  "name": "roblox-trade-host",
   "version": "6.0.0",
-  "description": "Roblox Script Host — Clean Edition",
-  "main": "server.js",
+  "description": "Roblox Trade Host — Players Monitor + Job Control",
+  "main": "index.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cookie-parser": "^1.4.6"
   },
   "engines": {
     "node": ">=18.0.0"
-  },
-  "dependencies": {
-    "cookie-parser": "^1.4.6",
-    "express": "^4.19.2"
   }
 }
