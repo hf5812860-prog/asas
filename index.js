@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════
-// 🚀 Rejoin Self-Reload Host v1.0
+// 🚀 Rejoin Self-Reload Host v1.1
 // ═══════════════════════════════════════════════════════
 const express = require('express');
 const app = express();
@@ -23,6 +23,19 @@ app.use((req, res, next) => {
         try { req.body = JSON.parse(req.body); } catch (e) {}
     }
     if (!req.body || typeof req.body !== 'object') req.body = {};
+    next();
+});
+
+// ─── cookie parser ───
+app.use((req, res, next) => {
+    req.cookies = {};
+    const cookie = req.headers.cookie;
+    if (cookie) {
+        cookie.split(';').forEach(c => {
+            const [k, v] = c.trim().split('=');
+            if (k && v) req.cookies[k] = decodeURIComponent(v);
+        });
+    }
     next();
 });
 
@@ -66,19 +79,6 @@ function apiAuth(req, res, next) {
     }
     next();
 }
-
-// cookie parser بسيط
-app.use((req, res, next) => {
-    req.cookies = {};
-    const cookie = req.headers.cookie;
-    if (cookie) {
-        cookie.split(';').forEach(c => {
-            const [k, v] = c.trim().split('=');
-            if (k && v) req.cookies[k] = decodeURIComponent(v);
-        });
-    }
-    next();
-});
 
 // ═══════════════════════════════════════════════════════
 // 🎨 Layout
@@ -129,7 +129,7 @@ function layout({ title, page, content }) {
                 </div>
                 <div>
                     <div class="font-bold text-white">Rejoin Host</div>
-                    <div class="text-xs text-gray-500">v1.0</div>
+                    <div class="text-xs text-gray-500">v1.1</div>
                 </div>
             </div>
         </div>
@@ -329,7 +329,7 @@ app.get('/scripts', adminAuth, (req, res) => {
             <div class="flex items-center justify-between">
                 <div>
                     <h1 class="text-2xl font-bold text-white">📜 السكربتات</h1>
-                    <p class="text-gray-500 text-sm mt-1">ارفع السكربت — يشتغل تلقائياً بعد الريجوين</p>
+                    <p class="text-gray-500 text-sm mt-1">ارفع السكربت — يشتغل تلقائياً عند Rejoin / Hop فقط</p>
                 </div>
                 <a href="/scripts/new" class="px-5 py-2.5 bg-gradient-to-r from-emerald-500 to-emerald-600 text-white font-bold rounded-xl">+ ارفع</a>
             </div>
@@ -339,10 +339,10 @@ app.get('/scripts', adminAuth, (req, res) => {
                 <div class="flex items-start gap-3">
                     <span class="text-2xl">✨</span>
                     <div>
-                        <div class="font-bold text-emerald-400 mb-1">الربط التلقائي مُفعّل</div>
+                        <div class="font-bold text-emerald-400 mb-1">الربط التلقائي مُفعّل (Rejoin / Hop فقط)</div>
                         <div class="text-sm text-gray-300">
                             السيرفر يستبدل <code class="text-emerald-400">API_URL</code> و <code class="text-emerald-400">API_KEY</code> و <code class="text-emerald-400">HOST_URL</code> تلقائياً.
-                            فقط الصق السكربت كما هو.
+                            السكربت يشتغل عند الريجوين أو الهوب — <b>ما يشتغل عند الخروج العادي</b>.
                         </div>
                     </div>
                 </div>
@@ -376,7 +376,7 @@ app.get('/scripts/new', adminAuth, (req, res) => {
                     <div>
                         <div class="font-bold text-emerald-400 mb-1">الربط التلقائي</div>
                         <div class="text-sm text-gray-300">
-                            الصق السكربت <b>كما هو</b> — السيرفر يستبدل الروابط تلقائياً ويحوّله لنسخة تدعم Rejoin.
+                            الصق السكربت <b>كما هو</b> — السيرفر يستبدل الروابط تلقائياً ويحوّله لنسخة تدعم Rejoin / Hop.
                         </div>
                     </div>
                 </div>
@@ -483,7 +483,7 @@ app.post('/admin/scripts/delete', adminAuth, (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════
-// 🚀 Loadstring — Self-Reload Injection
+// 🚀 Loadstring — Rejoin on Teleport only
 // ═══════════════════════════════════════════════════════
 app.get('/load/:name', (req, res) => {
     const s = scripts[req.params.name];
@@ -504,27 +504,28 @@ app.get('/load/:name', (req, res) => {
     const scriptUrl = hostUrl + '/load/' + s.name;
 
     // ═══════════════════════════════════════════════════
-    // 🔗 INJECTION HEADER — يشتغل قبل السكربت
+    // 🔗 HEADER — Rejoin on Teleport/Hop only
     // ═══════════════════════════════════════════════════
     const header = `-- ═══════════════════════════════════════════
 -- ${s.name}
 -- Server: ${hostUrl}
 -- Time: ${new Date().toISOString()}
 -- ═══════════════════════════════════════════
--- 🔗 AUTO-INJECTED SELF-RELOAD
+-- 🔗 REJOIN ON TELEPORT ONLY
+-- يشتغل عند Rejoin / Hop فقط — لا يشتغل عند الخروج العادي
 -- ═══════════════════════════════════════════
 _G = _G or {}
 _G.HOST_URL = "${hostUrl}"
 _G.HOST_KEY = "${API_KEY}"
 _G.SCRIPT_URL = "${scriptUrl}"
 
--- ✅ حفظ لـ Rejoin Self-Reload
-if queue_on_teleport then
+if queue_on_teleport and not _G.__REJOIN_REGISTERED then
+    _G.__REJOIN_REGISTERED = true
     pcall(function()
-        queue_on_teleport(string.format([[
+        queue_on_teleport(([[
             task.wait(3)
             loadstring(game:HttpGet("%s"))()
-        ]], _G.SCRIPT_URL or "${scriptUrl}"))
+        ]]):format(_G.SCRIPT_URL))
     end)
 end
 -- ═══════════════════════════════════════════\n\n`;
@@ -585,7 +586,7 @@ if (require.main === module) {
     app.listen(PORT, () => {
         console.log('');
         console.log('╔══════════════════════════════════════════════╗');
-        console.log('║  🔄 Rejoin Self-Reload Host v1.0             ║');
+        console.log('║  🔄 Rejoin Self-Reload Host v1.1             ║');
         console.log('╠══════════════════════════════════════════════╣');
         console.log(`║  🌐 http://localhost:${PORT}/dashboard`);
         console.log(`║  🔑 API Key: ${API_KEY}`);
