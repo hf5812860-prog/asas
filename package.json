@@ -1,7 +1,7 @@
 {
   "name": "roblox-trade-host",
-  "version": "6.0.0",
-  "description": "Roblox Trade Host — Players Monitor + Job Control",
+  "version": "8.0.0",
+  "description": "Roblox Trade Host — Data Receiver + Players Monitor",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
