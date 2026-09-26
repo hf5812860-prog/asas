@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════
-// Roblox Trade Host v6.0 — Players Monitor + Job Control
+// Roblox Trade Host v7.0 — Per-Player Controls
 // ═══════════════════════════════════════════════════════
 const express      = require('express');
 const cookieParser = require('cookie-parser');
@@ -38,9 +38,9 @@ const ONLINE_TIMEOUT = 60 * 1000;
 // ═══════════════════════════════════════════════════════
 // 🗄️ Database
 // ═══════════════════════════════════════════════════════
-const scripts  = {};   // السكربتات
-const users    = {};   // اللاعبين
-const commands = {};   // أوامر لكل لاعب: { userId: [cmd1, cmd2, ...] }
+const scripts  = {};
+const users    = {};
+const commands = {};
 const logs     = [];
 const timeline = [];
 
@@ -96,7 +96,8 @@ function validName(n) {
 }
 
 function fmtNum(n) {
-    return String(n || 0).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    const num = parseInt(n) || 0;
+    return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 }
 
 setInterval(addTimeline, 10000);
@@ -139,7 +140,6 @@ function layout({ title, page, content }) {
     .pulse-dot { width: 8px; height: 8px; background: #10b981; border-radius: 50%; animation: pulse 1.5s infinite; }
     @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.5;transform:scale(1.3)} }
     .glow { box-shadow: 0 0 30px rgba(59,130,246,0.15); }
-    select, input[type=text], input[type=number] { appearance: none; }
 </style>
 </head>
 <body class="min-h-screen text-gray-200">
@@ -153,7 +153,7 @@ function layout({ title, page, content }) {
                 </div>
                 <div>
                     <div class="font-bold text-white">Trade Host</div>
-                    <div class="text-xs text-gray-500">v6.0</div>
+                    <div class="text-xs text-gray-500">v7.0</div>
                 </div>
             </div>
         </div>
@@ -168,10 +168,6 @@ function layout({ title, page, content }) {
     <main class="flex-1 overflow-auto">${content}</main>
 </div>
 
-<script>
-    // تحديث تلقائي كل 4 ثواني
-    setTimeout(() => location.reload(), 4000);
-</script>
 </body>
 </html>`;
 }
@@ -317,47 +313,111 @@ app.get('/dashboard', adminAuth, (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════
-// 🟢 صفحة المتصلين — Players Monitor + Control
+// 🟢 صفحة المتصلين — v7.0 — تحكم تحت كل لاعب
 // ═══════════════════════════════════════════════════════
 app.get('/players', adminAuth, (req, res) => {
     const list = Object.values(users).sort((a, b) => b.lastSeen - a.lastSeen);
 
     const rowsHTML = list.length === 0
-        ? '<tr><td colspan="8" class="text-center py-12 text-gray-500">لا يوجد لاعبين مسجلين</td></tr>'
+        ? '<tr><td colspan="3" class="text-center py-12 text-gray-500">لا يوجد لاعبين مسجلين</td></tr>'
         : list.map(u => {
             const online = isOnline(u);
-            const isMe = u.robloxId.toString() === (req.query.me || '');
+            const hasMoney = (u.money && u.money > 0) || (u.bank && u.bank > 0);
+            
             return `
             <tr class="border-t border-gray-800 hover:bg-gray-800/30 ${online ? '' : 'opacity-60'}">
-                <td class="p-3">
-                    <div class="flex items-center gap-2">
+                <!-- العمود الأول: معلومات اللاعب -->
+                <td class="p-4 align-top" style="width: 250px;">
+                    <div class="flex items-center gap-3">
                         <img src="https://www.roblox.com/headshot-thumbnail/image?userId=${u.robloxId}&width=150&height=150&format=png"
-                             class="w-9 h-9 rounded-full border-2 ${online ? 'border-emerald-500' : 'border-gray-700'}"
+                             class="w-12 h-12 rounded-full border-2 ${online ? 'border-emerald-500' : 'border-gray-700'}"
                              onerror="this.style.display='none'">
-                        <div>
-                            <div class="text-white font-semibold text-sm">${esc(u.username)}</div>
-                            <div class="text-xs ${online ? 'text-emerald-400' : 'text-gray-500'}">${online ? '🟢 متصل' : '⚫ غير متصل'}</div>
+                        <div class="flex-1">
+                            <div class="text-white font-bold">${esc(u.username)}</div>
+                            <div class="text-xs ${online ? 'text-emerald-400' : 'text-gray-500'}">
+                                ${online ? '🟢 متصل' : '⚫ غير متصل'} • منذ ${timeAgo(u.lastSeen)}
+                            </div>
                         </div>
                     </div>
                 </td>
-                <td class="p-3 text-emerald-400 font-bold text-sm">$${fmtNum(u.money || 0)}</td>
-                <td class="p-3 text-yellow-400 font-bold text-sm">$${fmtNum(u.bank || 0)}</td>
-                <td class="p-3 text-blue-400 font-bold text-sm">Lv ${u.level || 0}</td>
-                <td class="p-3 text-gray-300 text-xs">${esc(u.currentJob || 'None')}</td>
-                <td class="p-3 text-purple-400 text-xs">${esc(u.farmMode || 'None')}</td>
-                <td class="p-3 text-gray-500 text-xs">${timeAgo(u.lastSeen)}</td>
-                <td class="p-3">
-                    <div class="flex flex-wrap gap-1">
-                        <form method="POST" action="/admin/player/command" class="inline">
-                            <input type="hidden" name="userId" value="${u.robloxId}">
-                            <input type="hidden" name="cmd" value="rejoin">
-                            <button type="submit" class="px-2 py-1 bg-blue-500/20 text-blue-400 rounded text-xs font-semibold hover:bg-blue-500/30" title="إعادة دخول">🔄 Rejoin</button>
-                        </form>
-                        <form method="POST" action="/admin/player/command" class="inline">
-                            <input type="hidden" name="userId" value="${u.robloxId}">
-                            <input type="hidden" name="cmd" value="hop">
-                            <button type="submit" class="px-2 py-1 bg-purple-500/20 text-purple-400 rounded text-xs font-semibold hover:bg-purple-500/30" title="تبديل سيرفر">🚀 Hop</button>
-                        </form>
+
+                <!-- العمود الثاني: الفلوس والإحصائيات -->
+                <td class="p-4 align-top" style="width: 300px;">
+                    <div class="grid grid-cols-2 gap-3">
+                        <div class="bg-emerald-500/10 border border-emerald-500/30 rounded-lg p-3">
+                            <div class="text-xs text-gray-400 mb-1">💵 الفلوس باليد</div>
+                            <div class="text-lg font-bold text-emerald-400">$${fmtNum(u.money || 0)}</div>
+                        </div>
+                        <div class="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3">
+                            <div class="text-xs text-gray-400 mb-1">🏦 البنك</div>
+                            <div class="text-lg font-bold text-yellow-400">$${fmtNum(u.bank || 0)}</div>
+                        </div>
+                        <div class="bg-blue-500/10 border border-blue-500/30 rounded-lg p-3">
+                            <div class="text-xs text-gray-400 mb-1">⭐ Level</div>
+                            <div class="text-lg font-bold text-blue-400">${u.level || 0}</div>
+                        </div>
+                        <div class="bg-purple-500/10 border border-purple-500/30 rounded-lg p-3">
+                            <div class="text-xs text-gray-400 mb-1">🔄 Farm Mode</div>
+                            <div class="text-sm font-bold text-purple-400">${esc(u.farmMode || 'None')}</div>
+                        </div>
+                    </div>
+                    <div class="mt-2 text-xs text-gray-500">
+                        الوظيفة الحالية: <span class="text-white">${esc(u.currentJob || 'None')}</span>
+                    </div>
+                </td>
+
+                <!-- العمود الثالث: التحكم -->
+                <td class="p-4 align-top" style="width: 350px;">
+                    <div class="space-y-2">
+                        <!-- الصف الأول: Rejoin + Hop -->
+                        <div class="grid grid-cols-2 gap-2">
+                            <form method="POST" action="/admin/player/command" class="contents">
+                                <input type="hidden" name="userId" value="${u.robloxId}">
+                                <input type="hidden" name="cmd" value="rejoin">
+                                <button type="submit" class="py-2 bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/30 text-blue-400 rounded-lg font-semibold text-xs">
+                                    🔄 Rejoin
+                                </button>
+                            </form>
+                            <form method="POST" action="/admin/player/command" class="contents">
+                                <input type="hidden" name="userId" value="${u.robloxId}">
+                                <input type="hidden" name="cmd" value="hop">
+                                <button type="submit" class="py-2 bg-purple-500/20 hover:bg-purple-500/30 border border-purple-500/30 text-purple-400 rounded-lg font-semibold text-xs">
+                                    🚀 Hop Server
+                                </button>
+                            </form>
+                        </div>
+
+                        <!-- الصف الثاني: الوظائف -->
+                        <div class="bg-gray-800/50 rounded-lg p-2">
+                            <div class="text-xs text-gray-400 mb-2">⚙️ تغيير الوظيفة:</div>
+                            <div class="grid grid-cols-5 gap-1">
+                                <form method="POST" action="/admin/player/command" class="contents">
+                                    <input type="hidden" name="userId" value="${u.robloxId}">
+                                    <input type="hidden" name="cmd" value="job_atm">
+                                    <button type="submit" class="py-1.5 bg-orange-500/20 hover:bg-orange-500/30 text-orange-400 rounded text-xs font-bold" title="ATM">🏧</button>
+                                </form>
+                                <form method="POST" action="/admin/player/command" class="contents">
+                                    <input type="hidden" name="userId" value="${u.robloxId}">
+                                    <input type="hidden" name="cmd" value="job_janitor">
+                                    <button type="submit" class="py-1.5 bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 rounded text-xs font-bold" title="Janitor">🧹</button>
+                                </form>
+                                <form method="POST" action="/admin/player/command" class="contents">
+                                    <input type="hidden" name="userId" value="${u.robloxId}">
+                                    <input type="hidden" name="cmd" value="job_quick11">
+                                    <button type="submit" class="py-1.5 bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-400 rounded text-xs font-bold" title="Quick-11">📦</button>
+                                </form>
+                                <form method="POST" action="/admin/player/command" class="contents">
+                                    <input type="hidden" name="userId" value="${u.robloxId}">
+                                    <input type="hidden" name="cmd" value="job_fishing">
+                                    <button type="submit" class="py-1.5 bg-green-500/20 hover:bg-green-500/30 text-green-400 rounded text-xs font-bold" title="Fishing">🎣</button>
+                                </form>
+                                <form method="POST" action="/admin/player/command" class="contents">
+                                    <input type="hidden" name="userId" value="${u.robloxId}">
+                                    <input type="hidden" name="cmd" value="job_none">
+                                    <button type="submit" class="py-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded text-xs font-bold" title="Stop">⏹️</button>
+                                </form>
+                            </div>
+                        </div>
                     </div>
                 </td>
             </tr>`;
@@ -368,7 +428,7 @@ app.get('/players', adminAuth, (req, res) => {
             <div class="flex items-center justify-between flex-wrap gap-4">
                 <div>
                     <h1 class="text-2xl font-bold text-white">🟢 المتصلين</h1>
-                    <p class="text-gray-500 text-sm mt-1">مراقبة وتحكم كامل باللاعبين</p>
+                    <p class="text-gray-500 text-sm mt-1">تحكم كامل بكل لاعب</p>
                 </div>
                 <div class="flex gap-3 text-sm">
                     <span class="px-3 py-2 bg-emerald-500/10 border border-emerald-500/30 rounded-lg text-emerald-400">
@@ -381,61 +441,15 @@ app.get('/players', adminAuth, (req, res) => {
             </div>
         </header>
 
-        <div class="p-6 space-y-6">
-            <!-- Job Control Panel -->
-            <div class="bg-gradient-to-br from-purple-500/10 to-purple-500/5 border border-purple-500/30 rounded-2xl p-6">
-                <h2 class="font-bold text-white mb-4 flex items-center gap-2">
-                    <span class="text-xl">⚙️</span> التحكم بالوظائف
-                </h2>
-                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3">
-                    <form method="POST" action="/admin/broadcast/command" class="contents">
-                        <input type="hidden" name="cmd" value="job_none">
-                        <button type="submit" class="py-3 bg-gray-700/50 hover:bg-gray-700 text-white rounded-xl font-semibold text-sm">
-                            ⏹️ إيقاف الكل
-                        </button>
-                    </form>
-                    <form method="POST" action="/admin/broadcast/command" class="contents">
-                        <input type="hidden" name="cmd" value="job_atm">
-                        <button type="submit" class="py-3 bg-orange-500/20 hover:bg-orange-500/30 border border-orange-500/30 text-orange-400 rounded-xl font-semibold text-sm">
-                            🏧 تشغيل ATM
-                        </button>
-                    </form>
-                    <form method="POST" action="/admin/broadcast/command" class="contents">
-                        <input type="hidden" name="cmd" value="job_janitor">
-                        <button type="submit" class="py-3 bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/30 text-blue-400 rounded-xl font-semibold text-sm">
-                            🧹 Janitor
-                        </button>
-                    </form>
-                    <form method="POST" action="/admin/broadcast/command" class="contents">
-                        <input type="hidden" name="cmd" value="job_quick11">
-                        <button type="submit" class="py-3 bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/30 text-cyan-400 rounded-xl font-semibold text-sm">
-                            📦 Quick-11
-                        </button>
-                    </form>
-                    <form method="POST" action="/admin/broadcast/command" class="contents">
-                        <input type="hidden" name="cmd" value="job_fishing">
-                        <button type="submit" class="py-3 bg-green-500/20 hover:bg-green-500/30 border border-green-500/30 text-green-400 rounded-xl font-semibold text-sm">
-                            🎣 Fishing
-                        </button>
-                    </form>
-                </div>
-                <p class="text-xs text-gray-500 mt-3">⚡ الأمر راح يوصل خلال 3-15 ثانية لكل اللاعبين المتصلين</p>
-            </div>
-
-            <!-- Players Table -->
+        <div class="p-6">
             <div class="bg-gray-900/60 border border-gray-800 rounded-2xl overflow-hidden">
                 <div class="overflow-x-auto">
-                    <table class="w-full text-sm">
+                    <table class="w-full">
                         <thead class="bg-gray-800/50">
                             <tr>
-                                <th class="text-right p-3 text-gray-400 font-semibold">اللاعب</th>
-                                <th class="text-right p-3 text-gray-400 font-semibold">💵 اليد</th>
-                                <th class="text-right p-3 text-gray-400 font-semibold">🏦 البنك</th>
-                                <th class="text-right p-3 text-gray-400 font-semibold">⭐ Level</th>
-                                <th class="text-right p-3 text-gray-400 font-semibold">الوظيفة</th>
-                                <th class="text-right p-3 text-gray-400 font-semibold">Farm Mode</th>
-                                <th class="text-right p-3 text-gray-400 font-semibold">آخر ظهور</th>
-                                <th class="text-right p-3 text-gray-400 font-semibold">إجراء</th>
+                                <th class="text-right p-4 text-gray-400 font-semibold">اللاعب</th>
+                                <th class="text-right p-4 text-gray-400 font-semibold">الإحصائيات</th>
+                                <th class="text-right p-4 text-gray-400 font-semibold">التحكم</th>
                             </tr>
                         </thead>
                         <tbody>${rowsHTML}</tbody>
@@ -459,7 +473,7 @@ app.get('/scripts', adminAuth, (req, res) => {
         ? `<div class="text-center py-16 col-span-full">
              <div class="text-6xl mb-4">📜</div>
              <div class="text-gray-400 mb-2">لا توجد سكربتات</div>
-             <div class="text-gray-500 text-sm mb-6">ارفع السكربت — راح يكون متاح للتحميل</div>
+             <div class="text-gray-500 text-sm mb-6">ارفع السكربت</div>
              <a href="/scripts/new" class="inline-block px-6 py-3 bg-gradient-to-r from-blue-500 to-purple-600 text-white font-bold rounded-xl">+ ارفع أول سكربت</a>
            </div>`
         : list.map(s => {
@@ -630,7 +644,7 @@ app.post('/admin/scripts/delete', adminAuth, (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════
-// 🚀 Loadstring — بدون حقن (بدون AUTO-INJECTED)
+// 🚀 Loadstring — بدون حقن
 // ═══════════════════════════════════════════════════════
 app.get('/load/:name', (req, res) => {
     const s = scripts[req.params.name];
@@ -647,15 +661,13 @@ app.get('/load/:name', (req, res) => {
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Access-Control-Allow-Origin', '*');
 
-    // ✅ بدون حقن — فقط الكود كما هو
     res.send(s.content);
 });
 
 // ═══════════════════════════════════════════════════════
-// 🔌 APIs — تستقبل من Roblox
+// 🔌 APIs
 // ═══════════════════════════════════════════════════════
 
-// تسجيل
 app.post('/api/register', apiAuth, (req, res) => {
     const { robloxId, username, jobId } = req.body;
     if (!robloxId) return res.status(400).json({ error: 'Missing robloxId' });
@@ -697,7 +709,6 @@ app.post('/api/heartbeat', apiAuth, (req, res) => {
         addLog('register', `${username || robloxId} انضم`);
     }
 
-    // تحديث البيانات
     users[robloxId].lastSeen = Date.now();
     if (username) users[robloxId].username = username;
     if (jobId) users[robloxId].jobId = jobId;
@@ -708,9 +719,9 @@ app.post('/api/heartbeat', apiAuth, (req, res) => {
     if (farmMode) users[robloxId].farmMode = farmMode;
     if (typeof uptime === 'number') users[robloxId].uptime = uptime;
 
-    // ✅ سحب الأوامر المعلقة
+    // سحب الأوامر المعلقة
     const pendingCmds = commands[robloxId] || [];
-    commands[robloxId] = [];  // تفريغ بعد الإرسال
+    commands[robloxId] = [];
 
     res.json({
         success: true,
@@ -720,10 +731,8 @@ app.post('/api/heartbeat', apiAuth, (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════
-// 🎛️ Admin Actions — الأوامر
+// 🎛️ Admin Actions
 // ═══════════════════════════════════════════════════════
-
-// أمر لاعب واحد
 app.post('/admin/player/command', adminAuth, (req, res) => {
     const { userId, cmd } = req.body;
     if (!userId || !cmd) return res.redirect('/players');
@@ -735,7 +744,6 @@ app.post('/admin/player/command', adminAuth, (req, res) => {
     res.redirect('/players');
 });
 
-// أمر جماعي (لكل المتصلين)
 app.post('/admin/broadcast/command', adminAuth, (req, res) => {
     const { cmd } = req.body;
     if (!cmd) return res.redirect('/players');
@@ -756,7 +764,6 @@ app.post('/admin/broadcast/command', adminAuth, (req, res) => {
 setInterval(() => {
     const now = Date.now();
     for (const id in users) {
-        // احذف اللاعبين غير المتصلين > ساعة
         if (now - users[id].lastSeen > 60 * 60 * 1000) {
             delete users[id];
         }
@@ -772,7 +779,7 @@ if (require.main === module) {
     app.listen(PORT, () => {
         console.log('');
         console.log('╔══════════════════════════════════════════════╗');
-        console.log('║  🚀 Trade Host v6.0 — Players Monitor        ║');
+        console.log('║  🚀 Trade Host v7.0 — Per-Player Controls    ║');
         console.log('╠══════════════════════════════════════════════╣');
         console.log(`║  🌐 http://localhost:${PORT}/dashboard`);
         console.log(`║  🔑 API: ${API_KEY}`);
