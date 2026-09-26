@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════
-// Roblox Trade Host v5.1 — Full Trade Room Support + HTTPS Fix
+// Roblox Trade Host v6.0 — Players Monitor + Job Control
 // ═══════════════════════════════════════════════════════
 const express      = require('express');
 const cookieParser = require('cookie-parser');
@@ -34,47 +34,21 @@ const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admin123";
 const SESSION_SECRET = process.env.SESSION_SECRET || "secret-change-me";
 const START_TIME     = Date.now();
 const ONLINE_TIMEOUT = 60 * 1000;
-const TRADE_EXPIRE   = 30 * 1000;
-const ROOM_EXPIRE    = 30 * 60 * 1000;
 
 // ═══════════════════════════════════════════════════════
 // 🗄️ Database
 // ═══════════════════════════════════════════════════════
-const scripts       = {};
-const users         = {};
-const trades        = {};
-const tradeRequests = {};
-const rooms         = {};
-const conversations = {};
-const logs          = [];
-const timeline      = [];
-
-let totalTrades = 0;
-let totalMessages = 0;
-let totalLoads = 0;
-let totalRooms = 0;
+const scripts  = {};   // السكربتات
+const users    = {};   // اللاعبين
+const commands = {};   // أوامر لكل لاعب: { userId: [cmd1, cmd2, ...] }
+const logs     = [];
+const timeline = [];
 
 // ═══════════════════════════════════════════════════════
 // 🛠️ Helpers
 // ═══════════════════════════════════════════════════════
 function isOnline(u) { return u && (Date.now() - u.lastSeen < ONLINE_TIMEOUT); }
 function getOnlineUsers() { return Object.values(users).filter(isOnline); }
-
-function activeTrades() {
-    const now = Date.now();
-    return Object.values(trades).filter(t => t.status === 'pending' && now - t.createdAt < TRADE_EXPIRE)
-        .sort((a, b) => b.createdAt - a.createdAt);
-}
-
-function recentPosters() {
-    const now = Date.now();
-    return Object.values(trades).filter(t => now - t.createdAt < 5 * 60 * 1000);
-}
-
-function activeRooms() {
-    const now = Date.now();
-    return Object.values(rooms).filter(r => !r.leftBy && now - r.createdAt < ROOM_EXPIRE);
-}
 
 function addLog(type, message) {
     logs.unshift({ type, message, time: Date.now() });
@@ -85,9 +59,6 @@ function addTimeline() {
     timeline.push({
         time: Date.now(),
         online: getOnlineUsers().length,
-        trades: activeTrades().length,
-        conversations: Object.keys(conversations).length,
-        rooms: activeRooms().length,
     });
     if (timeline.length > 60) timeline.shift();
 }
@@ -103,13 +74,9 @@ function apiAuth(req, res, next) {
     next();
 }
 
-function convKey(a, b) {
-    a = String(a); b = String(b);
-    return a < b ? a + "_" + b : b + "_" + a;
-}
-
-function genId(prefix) {
-    return prefix + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+function getHostUrl(req) {
+    const host = req.get('host') || 'localhost';
+    return 'https://' + host;
 }
 
 function timeAgo(ts) {
@@ -128,11 +95,8 @@ function validName(n) {
     return /^[a-zA-Z0-9_\-]{1,64}$/.test(n);
 }
 
-// ✅ دالة موحدة للحصول على الرابط الصحيح (HTTPS دائماً)
-function getHostUrl(req) {
-    const host = req.get('host') || 'localhost';
-    // Render / Vercel دائماً يستخدمان HTTPS في الإنتاج
-    return 'https://' + host;
+function fmtNum(n) {
+    return String(n || 0).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 }
 
 setInterval(addTimeline, 10000);
@@ -143,12 +107,8 @@ setInterval(addTimeline, 10000);
 function layout({ title, page, content }) {
     const navItems = [
         { href: '/dashboard', icon: '📊', label: 'لوحة التحكم', id: 'dashboard' },
+        { href: '/players',   icon: '🟢', label: 'المتصلين',     id: 'players' },
         { href: '/scripts',   icon: '📜', label: 'السكربتات',   id: 'scripts' },
-        { href: '/trades',    icon: '🔄', label: 'العروض',      id: 'trades' },
-        { href: '/rooms',     icon: '🤝', label: 'الغرف',       id: 'rooms' },
-        { href: '/chats',     icon: '💬', label: 'الدردشات',    id: 'chats' },
-        { href: '/users',     icon: '👥', label: 'اللاعبين',    id: 'users' },
-        { href: '/logs',      icon: '📋', label: 'السجلات',     id: 'logs' },
     ];
 
     const navHTML = navItems.map(item => {
@@ -179,6 +139,7 @@ function layout({ title, page, content }) {
     .pulse-dot { width: 8px; height: 8px; background: #10b981; border-radius: 50%; animation: pulse 1.5s infinite; }
     @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.5;transform:scale(1.3)} }
     .glow { box-shadow: 0 0 30px rgba(59,130,246,0.15); }
+    select, input[type=text], input[type=number] { appearance: none; }
 </style>
 </head>
 <body class="min-h-screen text-gray-200">
@@ -192,7 +153,7 @@ function layout({ title, page, content }) {
                 </div>
                 <div>
                     <div class="font-bold text-white">Trade Host</div>
-                    <div class="text-xs text-gray-500">v5.1</div>
+                    <div class="text-xs text-gray-500">v6.0</div>
                 </div>
             </div>
         </div>
@@ -207,6 +168,10 @@ function layout({ title, page, content }) {
     <main class="flex-1 overflow-auto">${content}</main>
 </div>
 
+<script>
+    // تحديث تلقائي كل 4 ثواني
+    setTimeout(() => location.reload(), 4000);
+</script>
 </body>
 </html>`;
 }
@@ -266,20 +231,12 @@ app.get('/', (req, res) => res.redirect('/dashboard'));
 
 app.get('/dashboard', adminAuth, (req, res) => {
     const online = getOnlineUsers();
-    const active = activeTrades();
-    const recentPostersList = recentPosters();
-    const uniquePosters = new Set(recentPostersList.map(t => t.fromId));
-    const activeConversations = Object.keys(conversations).length;
-    const pendingRequests = Object.values(tradeRequests).filter(r => r.status === 'pending').length;
-    const activeR = activeRooms();
 
     const stats = [
         { icon: '🟢', num: online.length, lbl: 'متصل الآن', color: 'emerald' },
-        { icon: '📤', num: uniquePosters.size, lbl: 'ناشرون (5د)', color: 'blue' },
-        { icon: '🔄', num: active.length, lbl: 'عروض نشطة', color: 'orange' },
-        { icon: '🤝', num: activeR.length, lbl: 'غرف نشطة', color: 'pink' },
-        { icon: '💬', num: activeConversations, lbl: 'محادثات', color: 'cyan' },
-        { icon: '📨', num: pendingRequests, lbl: 'طلبات معلقة', color: 'purple' },
+        { icon: '👥', num: Object.keys(users).length, lbl: 'إجمالي اللاعبين', color: 'blue' },
+        { icon: '📜', num: Object.keys(scripts).length, lbl: 'السكربتات', color: 'purple' },
+        { icon: '⚡', num: Object.values(scripts).reduce((s, sc) => s + (sc.loads || 0), 0), lbl: 'إجمالي التحميلات', color: 'orange' },
     ];
 
     const statsHTML = stats.map(s => `
@@ -317,7 +274,7 @@ app.get('/dashboard', adminAuth, (req, res) => {
             </div>
         </header>
         <div class="p-6 space-y-6">
-            <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">${statsHTML}</div>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4">${statsHTML}</div>
             <div class="bg-gray-900/60 border border-gray-800 rounded-2xl p-6">
                 <h2 class="font-bold text-white mb-4 flex items-center gap-2"><span class="text-xl">📈</span> النشاط المباشر</h2>
                 <div style="height: 250px;"><canvas id="activityChart"></canvas></div>
@@ -343,8 +300,6 @@ app.get('/dashboard', adminAuth, (req, res) => {
                     labels: labels,
                     datasets: [
                         { label: 'متصلين', data: timeline.map(t => t.online), borderColor: '#10b981', backgroundColor: 'rgba(16,185,129,0.1)', tension: 0.4, fill: true },
-                        { label: 'عروض', data: timeline.map(t => t.trades), borderColor: '#f59e0b', backgroundColor: 'rgba(245,158,11,0.1)', tension: 0.4, fill: true },
-                        { label: 'محادثات', data: timeline.map(t => t.conversations), borderColor: '#06b6d4', backgroundColor: 'rgba(6,182,212,0.1)', tension: 0.4, fill: true },
                     ]
                 },
                 options: {
@@ -362,17 +317,149 @@ app.get('/dashboard', adminAuth, (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════
+// 🟢 صفحة المتصلين — Players Monitor + Control
+// ═══════════════════════════════════════════════════════
+app.get('/players', adminAuth, (req, res) => {
+    const list = Object.values(users).sort((a, b) => b.lastSeen - a.lastSeen);
+
+    const rowsHTML = list.length === 0
+        ? '<tr><td colspan="8" class="text-center py-12 text-gray-500">لا يوجد لاعبين مسجلين</td></tr>'
+        : list.map(u => {
+            const online = isOnline(u);
+            const isMe = u.robloxId.toString() === (req.query.me || '');
+            return `
+            <tr class="border-t border-gray-800 hover:bg-gray-800/30 ${online ? '' : 'opacity-60'}">
+                <td class="p-3">
+                    <div class="flex items-center gap-2">
+                        <img src="https://www.roblox.com/headshot-thumbnail/image?userId=${u.robloxId}&width=150&height=150&format=png"
+                             class="w-9 h-9 rounded-full border-2 ${online ? 'border-emerald-500' : 'border-gray-700'}"
+                             onerror="this.style.display='none'">
+                        <div>
+                            <div class="text-white font-semibold text-sm">${esc(u.username)}</div>
+                            <div class="text-xs ${online ? 'text-emerald-400' : 'text-gray-500'}">${online ? '🟢 متصل' : '⚫ غير متصل'}</div>
+                        </div>
+                    </div>
+                </td>
+                <td class="p-3 text-emerald-400 font-bold text-sm">$${fmtNum(u.money || 0)}</td>
+                <td class="p-3 text-yellow-400 font-bold text-sm">$${fmtNum(u.bank || 0)}</td>
+                <td class="p-3 text-blue-400 font-bold text-sm">Lv ${u.level || 0}</td>
+                <td class="p-3 text-gray-300 text-xs">${esc(u.currentJob || 'None')}</td>
+                <td class="p-3 text-purple-400 text-xs">${esc(u.farmMode || 'None')}</td>
+                <td class="p-3 text-gray-500 text-xs">${timeAgo(u.lastSeen)}</td>
+                <td class="p-3">
+                    <div class="flex flex-wrap gap-1">
+                        <form method="POST" action="/admin/player/command" class="inline">
+                            <input type="hidden" name="userId" value="${u.robloxId}">
+                            <input type="hidden" name="cmd" value="rejoin">
+                            <button type="submit" class="px-2 py-1 bg-blue-500/20 text-blue-400 rounded text-xs font-semibold hover:bg-blue-500/30" title="إعادة دخول">🔄 Rejoin</button>
+                        </form>
+                        <form method="POST" action="/admin/player/command" class="inline">
+                            <input type="hidden" name="userId" value="${u.robloxId}">
+                            <input type="hidden" name="cmd" value="hop">
+                            <button type="submit" class="px-2 py-1 bg-purple-500/20 text-purple-400 rounded text-xs font-semibold hover:bg-purple-500/30" title="تبديل سيرفر">🚀 Hop</button>
+                        </form>
+                    </div>
+                </td>
+            </tr>`;
+        }).join('');
+
+    const content = `
+        <header class="bg-gray-900/60 backdrop-blur border-b border-gray-800 p-6 sticky top-0 z-10">
+            <div class="flex items-center justify-between flex-wrap gap-4">
+                <div>
+                    <h1 class="text-2xl font-bold text-white">🟢 المتصلين</h1>
+                    <p class="text-gray-500 text-sm mt-1">مراقبة وتحكم كامل باللاعبين</p>
+                </div>
+                <div class="flex gap-3 text-sm">
+                    <span class="px-3 py-2 bg-emerald-500/10 border border-emerald-500/30 rounded-lg text-emerald-400">
+                        ${getOnlineUsers().length} متصل
+                    </span>
+                    <span class="px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-gray-300">
+                        ${list.length} إجمالي
+                    </span>
+                </div>
+            </div>
+        </header>
+
+        <div class="p-6 space-y-6">
+            <!-- Job Control Panel -->
+            <div class="bg-gradient-to-br from-purple-500/10 to-purple-500/5 border border-purple-500/30 rounded-2xl p-6">
+                <h2 class="font-bold text-white mb-4 flex items-center gap-2">
+                    <span class="text-xl">⚙️</span> التحكم بالوظائف
+                </h2>
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3">
+                    <form method="POST" action="/admin/broadcast/command" class="contents">
+                        <input type="hidden" name="cmd" value="job_none">
+                        <button type="submit" class="py-3 bg-gray-700/50 hover:bg-gray-700 text-white rounded-xl font-semibold text-sm">
+                            ⏹️ إيقاف الكل
+                        </button>
+                    </form>
+                    <form method="POST" action="/admin/broadcast/command" class="contents">
+                        <input type="hidden" name="cmd" value="job_atm">
+                        <button type="submit" class="py-3 bg-orange-500/20 hover:bg-orange-500/30 border border-orange-500/30 text-orange-400 rounded-xl font-semibold text-sm">
+                            🏧 تشغيل ATM
+                        </button>
+                    </form>
+                    <form method="POST" action="/admin/broadcast/command" class="contents">
+                        <input type="hidden" name="cmd" value="job_janitor">
+                        <button type="submit" class="py-3 bg-blue-500/20 hover:bg-blue-500/30 border border-blue-500/30 text-blue-400 rounded-xl font-semibold text-sm">
+                            🧹 Janitor
+                        </button>
+                    </form>
+                    <form method="POST" action="/admin/broadcast/command" class="contents">
+                        <input type="hidden" name="cmd" value="job_quick11">
+                        <button type="submit" class="py-3 bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/30 text-cyan-400 rounded-xl font-semibold text-sm">
+                            📦 Quick-11
+                        </button>
+                    </form>
+                    <form method="POST" action="/admin/broadcast/command" class="contents">
+                        <input type="hidden" name="cmd" value="job_fishing">
+                        <button type="submit" class="py-3 bg-green-500/20 hover:bg-green-500/30 border border-green-500/30 text-green-400 rounded-xl font-semibold text-sm">
+                            🎣 Fishing
+                        </button>
+                    </form>
+                </div>
+                <p class="text-xs text-gray-500 mt-3">⚡ الأمر راح يوصل خلال 3-15 ثانية لكل اللاعبين المتصلين</p>
+            </div>
+
+            <!-- Players Table -->
+            <div class="bg-gray-900/60 border border-gray-800 rounded-2xl overflow-hidden">
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead class="bg-gray-800/50">
+                            <tr>
+                                <th class="text-right p-3 text-gray-400 font-semibold">اللاعب</th>
+                                <th class="text-right p-3 text-gray-400 font-semibold">💵 اليد</th>
+                                <th class="text-right p-3 text-gray-400 font-semibold">🏦 البنك</th>
+                                <th class="text-right p-3 text-gray-400 font-semibold">⭐ Level</th>
+                                <th class="text-right p-3 text-gray-400 font-semibold">الوظيفة</th>
+                                <th class="text-right p-3 text-gray-400 font-semibold">Farm Mode</th>
+                                <th class="text-right p-3 text-gray-400 font-semibold">آخر ظهور</th>
+                                <th class="text-right p-3 text-gray-400 font-semibold">إجراء</th>
+                            </tr>
+                        </thead>
+                        <tbody>${rowsHTML}</tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    `;
+
+    res.send(layout({ title: 'المتصلين', page: 'players', content }));
+});
+
+// ═══════════════════════════════════════════════════════
 // 📜 Scripts Management
 // ═══════════════════════════════════════════════════════
 app.get('/scripts', adminAuth, (req, res) => {
     const list = Object.values(scripts).sort((a, b) => b.updatedAt - a.updatedAt);
-    const host = getHostUrl(req);  // ✅ HTTPS
+    const host = getHostUrl(req);
 
     const html = list.length === 0
         ? `<div class="text-center py-16 col-span-full">
              <div class="text-6xl mb-4">📜</div>
              <div class="text-gray-400 mb-2">لا توجد سكربتات</div>
-             <div class="text-gray-500 text-sm mb-6">ارفع السكربت — راح يرتبط تلقائياً</div>
+             <div class="text-gray-500 text-sm mb-6">ارفع السكربت — راح يكون متاح للتحميل</div>
              <a href="/scripts/new" class="inline-block px-6 py-3 bg-gradient-to-r from-blue-500 to-purple-600 text-white font-bold rounded-xl">+ ارفع أول سكربت</a>
            </div>`
         : list.map(s => {
@@ -385,7 +472,6 @@ app.get('/scripts', adminAuth, (req, res) => {
                         <div class="flex items-center gap-2">
                             <span class="text-2xl">📜</span>
                             <h3 class="text-xl font-bold text-white">${esc(s.name)}</h3>
-                            <span class="px-2 py-1 bg-emerald-500/20 text-emerald-400 text-xs rounded font-bold">🔗 تلقائي</span>
                         </div>
                         <p class="text-gray-400 text-sm mt-1">${esc(s.description || 'بدون وصف')}</p>
                     </div>
@@ -395,7 +481,7 @@ app.get('/scripts', adminAuth, (req, res) => {
                     </div>
                 </div>
                 <div class="bg-gray-950 border border-gray-800 rounded-xl p-3 mb-3">
-                    <div class="text-xs text-gray-500 mb-2">🔗 loadstring — يشتغل مباشرة:</div>
+                    <div class="text-xs text-gray-500 mb-2">🔗 loadstring:</div>
                     <div class="flex items-center gap-2">
                         <code class="flex-1 text-emerald-400 text-xs overflow-x-auto whitespace-nowrap">${esc(loadCmd)}</code>
                         <button onclick="copyCmd('${esc(loadCmd).replace(/'/g, "\\'")}')" 
@@ -423,24 +509,12 @@ app.get('/scripts', adminAuth, (req, res) => {
             <div class="flex items-center justify-between flex-wrap gap-4">
                 <div>
                     <h1 class="text-2xl font-bold text-white">📜 السكربتات</h1>
-                    <p class="text-gray-500 text-sm mt-1">ارفع كود Luau كما هو — يتصل تلقائياً</p>
+                    <p class="text-gray-500 text-sm mt-1">ارفع كود Luau كما هو</p>
                 </div>
                 <a href="/scripts/new" class="px-5 py-2.5 bg-gradient-to-r from-emerald-500 to-emerald-600 text-white font-bold rounded-xl">+ ارفع سكربت</a>
             </div>
         </header>
         <div class="p-6">
-            <div class="bg-blue-500/10 border border-blue-500/30 rounded-2xl p-4 mb-6">
-                <div class="flex items-start gap-3">
-                    <span class="text-2xl">✨</span>
-                    <div>
-                        <div class="font-bold text-blue-400 mb-1">الربط التلقائي مُفعّل</div>
-                        <div class="text-sm text-gray-300">
-                            السيرفر يستبدل <code class="text-emerald-400">API_URL</code> و <code class="text-emerald-400">API_KEY</code> تلقائياً.
-                            لا حاجة لتعديل يدوي.
-                        </div>
-                    </div>
-                </div>
-            </div>
             <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">${html}</div>
         </div>
         <script>
@@ -461,20 +535,9 @@ app.get('/scripts/new', adminAuth, (req, res) => {
             </div>
         </header>
         <div class="p-6">
-            <div class="bg-emerald-500/10 border border-emerald-500/30 rounded-2xl p-4 mb-6">
-                <div class="flex items-start gap-3">
-                    <span class="text-2xl">🔗</span>
-                    <div>
-                        <div class="font-bold text-emerald-400 mb-1">الربط التلقائي</div>
-                        <div class="text-sm text-gray-300">
-                            الصق السكربت <b>كما هو</b>. السيرفر يستبدل الروابط تلقائياً.
-                        </div>
-                    </div>
-                </div>
-            </div>
             <form method="POST" action="/admin/scripts/save" class="bg-gray-900/60 border border-gray-800 rounded-2xl p-6 space-y-5">
                 <div>
-                    <label class="block text-gray-300 text-sm font-semibold mb-2">اسم السكربت (إنجليزي بدون مسافات)</label>
+                    <label class="block text-gray-300 text-sm font-semibold mb-2">اسم السكربت</label>
                     <input type="text" name="name" required pattern="[a-zA-Z0-9_\\-]{1,64}" placeholder="mercy-hub"
                         class="w-full px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-xl text-white">
                 </div>
@@ -485,7 +548,7 @@ app.get('/scripts/new', adminAuth, (req, res) => {
                 </div>
                 <div>
                     <label class="block text-gray-300 text-sm font-semibold mb-2">كود السكربت (Luau)</label>
-                    <textarea name="content" required rows="30" placeholder="-- الصق كود السكربت هنا كما هو"
+                    <textarea name="content" required rows="30" placeholder="-- الصق كود السكربت هنا"
                         class="w-full px-4 py-3 bg-gray-950 border border-gray-700 rounded-xl text-emerald-400 text-sm resize-y"></textarea>
                 </div>
                 <div class="flex gap-3 pt-2">
@@ -567,7 +630,7 @@ app.post('/admin/scripts/delete', adminAuth, (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════
-// 🚀 Loadstring — Auto-Injection (✅ مع HTTPS Fix)
+// 🚀 Loadstring — بدون حقن (بدون AUTO-INJECTED)
 // ═══════════════════════════════════════════════════════
 app.get('/load/:name', (req, res) => {
     const s = scripts[req.params.name];
@@ -577,7 +640,6 @@ app.get('/load/:name', (req, res) => {
 
     s.loads = (s.loads || 0) + 1;
     s.lastLoaded = Date.now();
-    totalLoads++;
 
     addLog('load', `⚡ تحميل "${s.name}" (${s.loads})`);
 
@@ -585,65 +647,19 @@ app.get('/load/:name', (req, res) => {
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Access-Control-Allow-Origin', '*');
 
-    // ✅✅✅ الإصلاح المهم: HTTPS دائماً
-    const host = req.get('host') || 'localhost';
-    const hostUrl = 'https://' + host;
-
-    const injection = `-- ═══════════════════════════════════════════
--- ${s.name}
--- Server: ${hostUrl}
--- Time: ${new Date().toISOString()}
--- ═══════════════════════════════════════════
--- 🔗 AUTO-INJECTED
--- ═══════════════════════════════════════════
-_G = _G or {}
-_G.HOST_URL = "${hostUrl}"
-_G.HOST_KEY = "${API_KEY}"
-_G.SCRIPT_NAME = "${s.name}"
--- ═══════════════════════════════════════════\n\n`;
-
-    let content = s.content;
-
-    // استبدال API_URL → _G.HOST_URL
-    content = content.replace(
-        /(\bAPI_URL\s*=\s*)["'][^"'\n]*["']/g,
-        '$1_G.HOST_URL'
-    );
-    // استبدال API_KEY → _G.HOST_KEY
-    content = content.replace(
-        /(\bAPI_KEY\s*=\s*)["'][^"'\n]*["']/g,
-        '$1_G.HOST_KEY'
-    );
-    // استبدال BASE_URL (احتياطي)
-    content = content.replace(
-        /(\bBASE_URL\s*=\s*)["'][^"'\n]*["']/g,
-        '$1_G.HOST_URL'
-    );
-
-    res.send(injection + content);
+    // ✅ بدون حقن — فقط الكود كما هو
+    res.send(s.content);
 });
 
 // ═══════════════════════════════════════════════════════
-// 🔌 APIs
+// 🔌 APIs — تستقبل من Roblox
 // ═══════════════════════════════════════════════════════
-app.get('/dashboard/stats', apiAuth, (req, res) => {
-    res.json({
-        online: getOnlineUsers().length,
-        totalUsers: Object.keys(users).length,
-        activeTrades: activeTrades().length,
-        activeRooms: activeRooms().length,
-        totalTrades,
-        totalMessages,
-        totalRooms,
-        conversations: Object.keys(conversations).length,
-        totalLoads,
-        uptime: Date.now() - START_TIME,
-    });
-});
 
+// تسجيل
 app.post('/api/register', apiAuth, (req, res) => {
     const { robloxId, username, jobId } = req.body;
     if (!robloxId) return res.status(400).json({ error: 'Missing robloxId' });
+
     const isNew = !users[robloxId];
     users[robloxId] = {
         robloxId: parseInt(robloxId),
@@ -651,402 +667,87 @@ app.post('/api/register', apiAuth, (req, res) => {
         jobId: jobId || '',
         lastSeen: Date.now(),
         joinedAt: users[robloxId]?.joinedAt || Date.now(),
-        tradesCreated: users[robloxId]?.tradesCreated || 0,
-        messagesSent: users[robloxId]?.messagesSent || 0,
+        money: users[robloxId]?.money || 0,
+        bank: users[robloxId]?.bank || 0,
+        level: users[robloxId]?.level || 0,
+        currentJob: users[robloxId]?.currentJob || 'None',
+        farmMode: users[robloxId]?.farmMode || 'None',
     };
     if (isNew) addLog('register', `${username} سجل دخول`);
     res.json({ success: true });
 });
 
+// نبضة + استقبال الإحصائيات + إرسال الأوامر
 app.post('/api/heartbeat', apiAuth, (req, res) => {
-    const { robloxId, jobId } = req.body;
+    const { robloxId, username, jobId, money, bank, level, currentJob, farmMode,
+            autoFarmATM, autoFarmJob, autoFarmFishing, selectedJob, uptime } = req.body;
+
     if (!robloxId) return res.status(400).json({ error: 'Missing robloxId' });
+
     if (!users[robloxId]) {
-        users[robloxId] = { robloxId: parseInt(robloxId), username: 'Unknown', jobId: jobId || '', lastSeen: Date.now(), tradesCreated: 0, messagesSent: 0 };
-    } else {
-        users[robloxId].lastSeen = Date.now();
-        if (jobId) users[robloxId].jobId = jobId;
-    }
-    res.json({ success: true });
-});
-
-app.post('/api/trade/create', apiAuth, (req, res) => {
-    const { fromId, fromName, myItems, theirItems, note, jobId } = req.body;
-    if (!fromId) return res.status(400).json({ error: 'Missing fromId' });
-
-    const id = genId('tr');
-    const trade = {
-        id,
-        fromId: parseInt(fromId),
-        fromName: fromName || 'Unknown',
-        myItems: Array.isArray(myItems) ? myItems : [],
-        theirItems: Array.isArray(theirItems) ? theirItems : [],
-        note: note || '',
-        jobId: jobId || '',
-        status: 'pending',
-        createdAt: Date.now(),
-    };
-    trades[id] = trade;
-    totalTrades++;
-    if (users[fromId]) users[fromId].tradesCreated = (users[fromId].tradesCreated || 0) + 1;
-    addLog('create', `${fromName} نشر عرض`);
-    res.json({ success: true, tradeId: id, trade });
-});
-
-app.get('/api/trades/all', apiAuth, (req, res) => res.json(activeTrades()));
-
-app.post('/api/trade/:id/delete', apiAuth, (req, res) => {
-    const trade = trades[req.params.id];
-    if (!trade) return res.status(404).json({ error: 'Not found' });
-    delete trades[req.params.id];
-    addLog('delete', `${trade.fromName} حذف عرضه`);
-    res.json({ success: true });
-});
-
-app.post('/api/trade/request', apiAuth, (req, res) => {
-    const { tradeId, fromId, fromName, toId, toName, myItems, myJobId, jobId } = req.body;
-    if (!fromId || !toId) return res.status(400).json({ error: 'Missing data' });
-
-    const id = genId('req');
-    tradeRequests[id] = {
-        id, tradeId,
-        fromId: parseInt(fromId), fromName,
-        toId: parseInt(toId), toName,
-        myItems: Array.isArray(myItems) ? myItems : [],
-        myJobId: myJobId || jobId || '',
-        ownerJobId: trades[tradeId]?.jobId || '',
-        status: 'pending',
-        createdAt: Date.now(),
-    };
-    addLog('request', `${fromName} → ${toName}`);
-    res.json({ success: true, requestId: id });
-});
-
-app.get('/api/trade/requests/list/:userId', apiAuth, (req, res) => {
-    const uid = parseInt(req.params.userId);
-    const list = Object.values(tradeRequests)
-        .filter(r => (r.fromId === uid || r.toId === uid) && r.status !== 'rejected' && r.status !== 'cancelled')
-        .sort((a, b) => b.createdAt - a.createdAt)
-        .map(r => ({
-            ...r,
-            jobId: r.ownerJobId || r.myJobId || '',
-            ownerJobId: r.ownerJobId || '',
-            fromJobId: r.myJobId || '',
-        }));
-    res.json(list);
-});
-
-app.post('/api/trade/request/accept', apiAuth, (req, res) => {
-    const { requestId, userId } = req.body;
-    const r = tradeRequests[requestId];
-    if (!r) return res.status(404).json({ error: 'Not found' });
-
-    r.status = 'accepted';
-    r.acceptedAt = Date.now();
-
-    for (const id in tradeRequests) {
-        const other = tradeRequests[id];
-        if (id !== requestId && other.tradeId === r.tradeId && other.status === 'pending') {
-            other.status = 'rejected';
-            other.rejectedAt = Date.now();
-            other.rejectedByAuto = true;
-        }
+        users[robloxId] = {
+            robloxId: parseInt(robloxId),
+            username: username || 'Unknown',
+            jobId: jobId || '',
+            lastSeen: Date.now(),
+            joinedAt: Date.now(),
+            money: 0, bank: 0, level: 0,
+            currentJob: 'None', farmMode: 'None',
+        };
+        addLog('register', `${username || robloxId} انضم`);
     }
 
-    for (const id in trades) {
-        const t = trades[id];
-        if (t.fromId === r.fromId) {
-            delete trades[id];
-        }
-    }
+    // تحديث البيانات
+    users[robloxId].lastSeen = Date.now();
+    if (username) users[robloxId].username = username;
+    if (jobId) users[robloxId].jobId = jobId;
+    if (typeof money === 'number') users[robloxId].money = money;
+    if (typeof bank === 'number') users[robloxId].bank = bank;
+    if (typeof level === 'number') users[robloxId].level = level;
+    if (currentJob) users[robloxId].currentJob = currentJob;
+    if (farmMode) users[robloxId].farmMode = farmMode;
+    if (typeof uptime === 'number') users[robloxId].uptime = uptime;
 
-    const roomId = genId('room');
-    rooms[roomId] = {
-        id: roomId,
-        createdAt: Date.now(),
-        otherId: r.fromId,
-        ownerId: r.toId,
-        leftBy: null,
-        leftAt: null,
-        requestId: requestId,
-    };
-    totalRooms++;
-
-    const key = convKey(r.fromId, r.toId);
-    if (!conversations[key]) conversations[key] = [];
-
-    addLog('accept', `✅ ${r.toName} قبل ${r.fromName}`);
+    // ✅ سحب الأوامر المعلقة
+    const pendingCmds = commands[robloxId] || [];
+    commands[robloxId] = [];  // تفريغ بعد الإرسال
 
     res.json({
         success: true,
-        requestId: r.id,
-        roomId: roomId,
-        otherId: r.fromId,
-        otherName: r.fromName,
-        jobId: r.ownerJobId || '',
-        fromJobId: r.myJobId || '',
+        commands: pendingCmds,
+        serverTime: Date.now(),
     });
-});
-
-app.post('/api/trade/request/reject', apiAuth, (req, res) => {
-    const { requestId } = req.body;
-    const r = tradeRequests[requestId];
-    if (!r) return res.status(404).json({ error: 'Not found' });
-    r.status = 'rejected';
-    r.rejectedAt = Date.now();
-    addLog('reject', `${r.toName} رفض ${r.fromName}`);
-    res.json({ success: true });
-});
-
-app.post('/api/trade/cancel', apiAuth, (req, res) => {
-    const { tradeId } = req.body;
-    const r = tradeRequests[tradeId];
-    if (r) { r.status = 'cancelled'; r.cancelledAt = Date.now(); }
-    res.json({ success: true });
-});
-
-app.post('/api/trade/room/leave', apiAuth, (req, res) => {
-    const { roomId, userId, otherId } = req.body;
-    const room = rooms[roomId];
-    if (!room) return res.status(404).json({ error: 'Room not found' });
-
-    room.leftBy = parseInt(userId);
-    room.leftAt = Date.now();
-    addLog('room_leave', `🚪 ${userId} خرج من الغرفة ${roomId}`);
-
-    res.json({ success: true });
-});
-
-app.get('/api/trade/room/:roomId/status', apiAuth, (req, res) => {
-    const room = rooms[req.params.roomId];
-    if (!room) return res.json({ active: false, leftBy: null, exists: false });
-
-    const isActive = !room.leftBy && (Date.now() - room.createdAt < ROOM_EXPIRE);
-    res.json({
-        active: isActive,
-        leftBy: room.leftBy,
-        leftAt: room.leftAt,
-        createdAt: room.createdAt,
-        exists: true,
-    });
-});
-
-app.get('/api/dm/conversations/:userId', apiAuth, (req, res) => {
-    const uid = parseInt(req.params.userId);
-    const result = [];
-    const seen = new Set();
-
-    for (const key in conversations) {
-        const [a, b] = key.split('_').map(Number);
-        if (a === uid || b === uid) {
-            const otherId = a === uid ? b : a;
-            if (seen.has(otherId)) continue;
-            seen.add(otherId);
-            const msgs = conversations[key];
-            result.push({
-                userId: otherId,
-                name: users[otherId]?.username || 'Player' + otherId,
-                lastMsg: msgs.length ? msgs[msgs.length - 1].message : '',
-                lastTime: msgs.length ? msgs[msgs.length - 1].time : 0,
-            });
-        }
-    }
-    for (const id in tradeRequests) {
-        const r = tradeRequests[id];
-        if (r.status !== 'accepted') continue;
-        let otherId, otherName;
-        if (r.fromId === uid) { otherId = r.toId; otherName = r.toName; }
-        else if (r.toId === uid) { otherId = r.fromId; otherName = r.fromName; }
-        else continue;
-        if (seen.has(otherId)) continue;
-        seen.add(otherId);
-        result.push({ userId: otherId, name: otherName, lastMsg: '— جديدة —', lastTime: r.acceptedAt || r.createdAt });
-    }
-    result.sort((a, b) => (b.lastTime || 0) - (a.lastTime || 0));
-    res.json(result);
-});
-
-app.get('/api/dm/messages/:fromId/:toId', apiAuth, (req, res) => {
-    const key = convKey(req.params.fromId, req.params.toId);
-    res.json({ messages: conversations[key] || [] });
-});
-
-app.post('/api/dm/send', apiAuth, (req, res) => {
-    const { fromId, fromName, toId, toName, message } = req.body;
-    if (!fromId || !toId || !message) return res.status(400).json({ error: 'Missing data' });
-
-    const key = convKey(fromId, toId);
-    if (!conversations[key]) conversations[key] = [];
-    conversations[key].push({
-        fromId: parseInt(fromId),
-        fromName: fromName || 'Unknown',
-        toId: parseInt(toId),
-        toName: toName || 'Unknown',
-        message: String(message).trim(),
-        time: Date.now(),
-    });
-    if (conversations[key].length > 500) conversations[key].splice(0, conversations[key].length - 500);
-
-    totalMessages++;
-    if (users[fromId]) users[fromId].messagesSent = (users[fromId].messagesSent || 0) + 1;
-
-    const msgStr = String(message).trim();
-    if (msgStr !== '[[JOIN]]' && msgStr !== '[[LEFT]]') {
-        addLog('dm', `${fromName} → ${toName}`);
-    }
-    res.json({ success: true });
 });
 
 // ═══════════════════════════════════════════════════════
-// 📄 Trades / Rooms / Chats / Users / Logs Pages
+// 🎛️ Admin Actions — الأوامر
 // ═══════════════════════════════════════════════════════
-app.get('/trades', adminAuth, (req, res) => {
-    const allList = Object.values(trades).sort((a, b) => b.createdAt - a.createdAt).slice(0, 50);
-    const active = activeTrades();
-    const html = allList.length === 0
-        ? '<div class="text-center py-12 text-gray-500">لا توجد عروض</div>'
-        : allList.map(t => {
-            const age = Math.floor((Date.now() - t.createdAt) / 1000);
-            const isActive = t.status === 'pending' && age < 30;
-            return `
-                <div class="bg-gray-900/60 border ${isActive ? 'border-emerald-500/50' : 'border-gray-800'} rounded-xl p-4 mb-3">
-                    <div class="flex items-center justify-between mb-2">
-                        <div class="flex items-center gap-3">
-                            <img src="https://www.roblox.com/headshot-thumbnail/image?userId=${t.fromId}&width=150&height=150&format=png" class="w-10 h-10 rounded-full border-2 ${isActive ? 'border-emerald-500' : 'border-gray-700'}">
-                            <div><div class="font-bold text-white">${esc(t.fromName)}</div><div class="text-xs text-gray-500">منذ ${age} ثانية</div></div>
-                        </div>
-                        <span class="px-3 py-1 rounded-lg text-xs font-bold ${isActive ? 'bg-emerald-500/20 text-emerald-400' : 'bg-gray-700 text-gray-400'}">${isActive ? '🟢 نشط' : '⚫ منتهي'}</span>
-                    </div>
-                    <div class="text-sm text-gray-300 mb-2"><span class="text-gray-500">🚗 يعطي:</span> ${(t.myItems || []).map(i => esc(String(i).split('||')[0])).join(' • ') || '—'}</div>
-                    <div class="text-sm text-gray-300"><span class="text-gray-500">🎯 يبي:</span> ${(t.theirItems || []).join(' • ') || 'أي عرض'}</div>
-                </div>`;
-        }).join('');
-    const content = `
-        <header class="bg-gray-900/60 backdrop-blur border-b border-gray-800 p-6 sticky top-0 z-10">
-            <div class="flex items-center justify-between">
-                <div><h1 class="text-2xl font-bold text-white">🔄 العروض</h1><p class="text-gray-500 text-sm mt-1">آخر 50 عرض</p></div>
-                <span class="px-3 py-2 bg-emerald-500/10 border border-emerald-500/30 rounded-lg text-emerald-400 text-sm">${active.length} نشط</span>
-            </div>
-        </header>
-        <div class="p-6">${html}</div>
-    `;
-    res.send(layout({ title: 'العروض', page: 'trades', content }));
+
+// أمر لاعب واحد
+app.post('/admin/player/command', adminAuth, (req, res) => {
+    const { userId, cmd } = req.body;
+    if (!userId || !cmd) return res.redirect('/players');
+
+    if (!commands[userId]) commands[userId] = [];
+    commands[userId].push(cmd);
+
+    addLog('command', `📤 أمر "${cmd}" → ${userId}`);
+    res.redirect('/players');
 });
 
-app.get('/rooms', adminAuth, (req, res) => {
-    const allRooms = Object.values(rooms).sort((a, b) => b.createdAt - a.createdAt).slice(0, 50);
-    const activeR = activeRooms();
-    const html = allRooms.length === 0
-        ? '<div class="text-center py-12 text-gray-500">لا توجد غرف</div>'
-        : allRooms.map(r => {
-            const isActive = !r.leftBy && (Date.now() - r.createdAt < ROOM_EXPIRE);
-            const other = users[r.otherId];
-            const owner = users[r.ownerId];
-            return `
-                <div class="bg-gray-900/60 border ${isActive ? 'border-pink-500/50' : 'border-gray-800'} rounded-xl p-4 mb-3">
-                    <div class="flex items-center justify-between mb-3">
-                        <div class="flex items-center gap-3">
-                            <img src="https://www.roblox.com/headshot-thumbnail/image?userId=${r.otherId}&width=150&height=150&format=png" class="w-10 h-10 rounded-full border-2 border-blue-500">
-                            <div><div class="font-bold text-white">${esc(other?.username || 'ID:' + r.otherId)} ↔ ${esc(owner?.username || 'ID:' + r.ownerId)}</div><div class="text-xs text-gray-500">منذ ${timeAgo(r.createdAt)}</div></div>
-                        </div>
-                        <span class="px-3 py-1 rounded-lg text-xs font-bold ${isActive ? 'bg-pink-500/20 text-pink-400' : 'bg-gray-700 text-gray-400'}">${isActive ? '🟢 نشطة' : '⚫ منتهية'}</span>
-                    </div>
-                </div>`;
-        }).join('');
-    const content = `
-        <header class="bg-gray-900/60 backdrop-blur border-b border-gray-800 p-6 sticky top-0 z-10">
-            <div class="flex items-center justify-between">
-                <div><h1 class="text-2xl font-bold text-white">🤝 الغرف</h1><p class="text-gray-500 text-sm mt-1">آخر 50 غرفة</p></div>
-                <span class="px-3 py-2 bg-pink-500/10 border border-pink-500/30 rounded-lg text-pink-400 text-sm">${activeR.length} نشطة</span>
-            </div>
-        </header>
-        <div class="p-6">${html}</div>
-    `;
-    res.send(layout({ title: 'الغرف', page: 'rooms', content }));
-});
+// أمر جماعي (لكل المتصلين)
+app.post('/admin/broadcast/command', adminAuth, (req, res) => {
+    const { cmd } = req.body;
+    if (!cmd) return res.redirect('/players');
 
-app.get('/chats', adminAuth, (req, res) => {
-    const convList = Object.entries(conversations).map(([key, msgs]) => {
-        const [a, b] = key.split('_').map(Number);
-        return { key, userA: { id: a, name: users[a]?.username || 'Player' + a }, userB: { id: b, name: users[b]?.username || 'Player' + b }, messages: msgs, lastMsg: msgs.length ? msgs[msgs.length - 1] : null, count: msgs.length };
-    }).sort((a, b) => (b.lastMsg?.time || 0) - (a.lastMsg?.time || 0));
-    const html = convList.length === 0 ? '<div class="text-center py-12 text-gray-500">لا توجد محادثات</div>'
-        : convList.map(c => `
-            <div class="bg-gray-900/60 border border-gray-800 rounded-xl p-5 mb-4">
-                <div class="font-bold text-white mb-2">${esc(c.userA.name)} ↔ ${esc(c.userB.name)}</div>
-                <div class="text-xs text-gray-500 mb-2">${c.count} رسالة</div>
-                ${c.lastMsg ? `<div class="bg-gray-800/50 rounded-lg p-3 text-sm text-gray-200">${esc(c.lastMsg.message)}</div>` : ''}
-            </div>
-        `).join('');
-    const content = `
-        <header class="bg-gray-900/60 backdrop-blur border-b border-gray-800 p-6 sticky top-0 z-10">
-            <h1 class="text-2xl font-bold text-white">💬 الدردشات</h1>
-        </header>
-        <div class="p-6">${html}</div>
-    `;
-    res.send(layout({ title: 'الدردشات', page: 'chats', content }));
-});
+    const online = getOnlineUsers();
+    for (const u of online) {
+        if (!commands[u.robloxId]) commands[u.robloxId] = [];
+        commands[u.robloxId].push(cmd);
+    }
 
-app.get('/users', adminAuth, (req, res) => {
-    const list = Object.values(users).sort((a, b) => b.lastSeen - a.lastSeen);
-    const rowsHTML = list.length === 0
-        ? '<tr><td colspan="5" class="text-center py-12 text-gray-500">لا يوجد لاعبين</td></tr>'
-        : list.map(u => `
-            <tr class="border-t border-gray-800 hover:bg-gray-800/30">
-                <td class="p-4">
-                    <div class="flex items-center gap-3">
-                        <img src="https://www.roblox.com/headshot-thumbnail/image?userId=${u.robloxId}&width=150&height=150&format=png" class="w-10 h-10 rounded-full border-2 ${isOnline(u) ? 'border-emerald-500' : 'border-gray-700'}">
-                        <div><div class="text-white font-semibold">${esc(u.username)}</div><div class="text-xs ${isOnline(u) ? 'text-emerald-400' : 'text-gray-500'}">${isOnline(u) ? '🟢 متصل' : '⚫ غير متصل'}</div></div>
-                    </div>
-                </td>
-                <td class="p-4 text-gray-400 font-mono text-xs">${u.robloxId}</td>
-                <td class="p-4 text-gray-300 text-xs">${u.tradesCreated || 0}</td>
-                <td class="p-4 text-gray-300 text-xs">${u.messagesSent || 0}</td>
-                <td class="p-4 text-gray-300 text-xs">${timeAgo(u.lastSeen)}</td>
-            </tr>
-        `).join('');
-    const content = `
-        <header class="bg-gray-900/60 backdrop-blur border-b border-gray-800 p-6 sticky top-0 z-10">
-            <h1 class="text-2xl font-bold text-white">👥 اللاعبين</h1>
-            <p class="text-gray-500 text-sm mt-1">${list.length} لاعب</p>
-        </header>
-        <div class="p-6">
-            <div class="bg-gray-900/60 border border-gray-800 rounded-2xl overflow-hidden">
-                <table class="w-full text-sm">
-                    <thead class="bg-gray-800/50"><tr>
-                        <th class="text-right p-4 text-gray-400">اللاعب</th>
-                        <th class="text-right p-4 text-gray-400">ID</th>
-                        <th class="text-right p-4 text-gray-400">عروض</th>
-                        <th class="text-right p-4 text-gray-400">رسائل</th>
-                        <th class="text-right p-4 text-gray-400">آخر ظهور</th>
-                    </tr></thead>
-                    <tbody>${rowsHTML}</tbody>
-                </table>
-            </div>
-        </div>
-    `;
-    res.send(layout({ title: 'اللاعبين', page: 'users', content }));
-});
-
-app.get('/logs', adminAuth, (req, res) => {
-    const icons = { register: '👤', create: '📤', delete: '🗑️', dm: '✉️', request: '📨', accept: '✅', reject: '❌', load: '⚡', script_save: '💾', script_delete: '🗑️', room_leave: '🚪' };
-    const html = logs.length === 0 ? '<div class="text-center py-12 text-gray-500">لا توجد أحداث</div>'
-        : logs.slice(0, 100).map(l => `
-            <div class="p-3 border-b border-gray-800 flex items-center gap-3">
-                <span class="text-lg">${icons[l.type] || '📌'}</span>
-                <span class="text-sm text-gray-300 flex-1">${esc(l.message)}</span>
-                <span class="text-xs text-gray-500">${timeAgo(l.time)}</span>
-            </div>
-        `).join('');
-    const content = `
-        <header class="bg-gray-900/60 backdrop-blur border-b border-gray-800 p-6 sticky top-0 z-10">
-            <h1 class="text-2xl font-bold text-white">📋 السجلات</h1>
-        </header>
-        <div class="p-6">
-            <div class="bg-gray-900/60 border border-gray-800 rounded-2xl overflow-hidden max-h-[700px] overflow-y-auto">${html}</div>
-        </div>
-    `;
-    res.send(layout({ title: 'السجلات', page: 'logs', content }));
+    addLog('command', `📢 أمر جماعي "${cmd}" → ${online.length} لاعب`);
+    res.redirect('/players');
 });
 
 // ═══════════════════════════════════════════════════════
@@ -1054,16 +755,13 @@ app.get('/logs', adminAuth, (req, res) => {
 // ═══════════════════════════════════════════════════════
 setInterval(() => {
     const now = Date.now();
-    for (const id in trades) {
-        if (now - trades[id].createdAt > 5 * 60 * 1000) delete trades[id];
+    for (const id in users) {
+        // احذف اللاعبين غير المتصلين > ساعة
+        if (now - users[id].lastSeen > 60 * 60 * 1000) {
+            delete users[id];
+        }
     }
-    for (const id in tradeRequests) {
-        if (now - tradeRequests[id].createdAt > 10 * 60 * 1000) delete tradeRequests[id];
-    }
-    for (const id in rooms) {
-        if (now - rooms[id].createdAt > ROOM_EXPIRE) delete rooms[id];
-    }
-}, 30000);
+}, 60000);
 
 // ═══════════════════════════════════════════════════════
 // 🚀 Start
@@ -1074,7 +772,7 @@ if (require.main === module) {
     app.listen(PORT, () => {
         console.log('');
         console.log('╔══════════════════════════════════════════════╗');
-        console.log('║  🚀 Trade Host v5.1 — HTTPS Fix Edition      ║');
+        console.log('║  🚀 Trade Host v6.0 — Players Monitor        ║');
         console.log('╠══════════════════════════════════════════════╣');
         console.log(`║  🌐 http://localhost:${PORT}/dashboard`);
         console.log(`║  🔑 API: ${API_KEY}`);
