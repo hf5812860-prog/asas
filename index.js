@@ -1,16 +1,18 @@
 // ═══════════════════════════════════════════════════════
-// Roblox Trade Dashboard v1.0 — All in One
+// Roblox Script Host + Dashboard v2.0
+// رفع سكربت + loadstring + إحصائيات مباشرة
 // ═══════════════════════════════════════════════════════
 const express      = require('express');
 const cookieParser = require('cookie-parser');
 const app          = express();
 
-app.use(express.json({ limit: '5mb' }));
-app.use(express.urlencoded({ extended: true, limit: '5mb' }));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express.text({ type: ['text/*'], limit: '10mb' }));
 app.use(cookieParser());
 
 app.use((req, res, next) => {
-    if (typeof req.body === 'string' && req.body.trim()) {
+    if (typeof req.body === 'string' && req.body.trim() && !req.path.includes('/admin/scripts/save')) {
         try { req.body = JSON.parse(req.body); } catch (e) {}
     }
     if (!req.body || typeof req.body !== 'object') req.body = {};
@@ -32,24 +34,23 @@ const API_KEY        = process.env.API_KEY        || "JXZXCV";
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admin123";
 const SESSION_SECRET = process.env.SESSION_SECRET || "secret-change-me";
 const START_TIME     = Date.now();
-const ONLINE_TIMEOUT = 60 * 1000;      // 60 ثانية = متصل
-const TRADE_EXPIRE   = 30 * 1000;      // 30 ثانية
-const MAX_TIMELINE   = 60;             // آخر 60 نقطة للرسم البياني
+const ONLINE_TIMEOUT = 60 * 1000;
+const TRADE_EXPIRE   = 30 * 1000;
 
 // ═══════════════════════════════════════════════════════
 // 🗄️ Database
 // ═══════════════════════════════════════════════════════
-const users         = {}; // اللاعبين
-const trades        = {}; // العروض
-const tradeRequests = {}; // طلبات المقايضة
-const dmMessages    = {}; // الرسائل الخاصة
-const conversations = {}; // محادثات
-const logs          = []; // السجلات
-const timeline      = []; // للأداء عبر الوقت
+const scripts       = {}; // السكربتات المرفوعة
+const users         = {};
+const trades        = {};
+const tradeRequests = {};
+const conversations = {};
+const logs          = [];
+const timeline      = [];
 
 let totalTrades = 0;
 let totalMessages = 0;
-let totalRequests = 0;
+let totalLoads = 0;
 
 // ═══════════════════════════════════════════════════════
 // 🛠️ Helpers
@@ -59,12 +60,10 @@ function getOnlineUsers() { return Object.values(users).filter(isOnline); }
 
 function activeTrades() {
     const now = Date.now();
-    return Object.values(trades).filter(t =>
-        t.status === 'pending' && now - t.createdAt < TRADE_EXPIRE
-    ).sort((a, b) => b.createdAt - a.createdAt);
+    return Object.values(trades).filter(t => t.status === 'pending' && now - t.createdAt < TRADE_EXPIRE)
+        .sort((a, b) => b.createdAt - a.createdAt);
 }
 
-// نشطاء آخر 5 دقائق للناشرين
 function recentPosters() {
     const now = Date.now();
     return Object.values(trades).filter(t => now - t.createdAt < 5 * 60 * 1000);
@@ -82,7 +81,7 @@ function addTimeline() {
         trades: activeTrades().length,
         conversations: Object.keys(conversations).length,
     });
-    if (timeline.length > MAX_TIMELINE) timeline.shift();
+    if (timeline.length > 60) timeline.shift();
 }
 
 function adminAuth(req, res, next) {
@@ -92,8 +91,7 @@ function adminAuth(req, res, next) {
 }
 
 function apiAuth(req, res, next) {
-    const key = req.headers['x-api-key'];
-    if (key !== API_KEY) return res.status(401).json({ error: 'Unauthorized' });
+    if (req.headers['x-api-key'] !== API_KEY) return res.status(401).json({ error: 'Unauthorized' });
     next();
 }
 
@@ -114,7 +112,10 @@ function esc(s) {
     return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-// حفظ snapshot كل 10 ثواني
+function validName(n) {
+    return /^[a-zA-Z0-9_\-]{1,64}$/.test(n);
+}
+
 setInterval(addTimeline, 10000);
 
 // ═══════════════════════════════════════════════════════
@@ -123,7 +124,8 @@ setInterval(addTimeline, 10000);
 function layout({ title, page, content }) {
     const navItems = [
         { href: '/dashboard', icon: '📊', label: 'لوحة التحكم', id: 'dashboard' },
-        { href: '/trades',    icon: '🔄', label: 'العروض',     id: 'trades' },
+        { href: '/scripts',   icon: '📜', label: 'السكربتات',   id: 'scripts' },
+        { href: '/trades',    icon: '🔄', label: 'العروض',      id: 'trades' },
         { href: '/chats',     icon: '💬', label: 'الدردشات',    id: 'chats' },
         { href: '/users',     icon: '👥', label: 'اللاعبين',    id: 'users' },
         { href: '/logs',      icon: '📋', label: 'السجلات',     id: 'logs' },
@@ -145,20 +147,18 @@ function layout({ title, page, content }) {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>${esc(title)} — Trade Dashboard</title>
+<title>${esc(title)} — Script Host</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&family=JetBrains+Mono&display=swap" rel="stylesheet">
 <style>
     * { font-family: 'Cairo', sans-serif; }
+    code, pre, textarea { font-family: 'JetBrains Mono', monospace; }
     body { background: #0a0a12; margin: 0; }
     ::-webkit-scrollbar { width: 8px; height: 8px; }
     ::-webkit-scrollbar-track { background: #1a1a2e; }
     ::-webkit-scrollbar-thumb { background: #3b82f6; border-radius: 4px; }
-    .pulse-dot {
-        width: 8px; height: 8px; background: #10b981; border-radius: 50%;
-        animation: pulse 1.5s infinite;
-    }
+    .pulse-dot { width: 8px; height: 8px; background: #10b981; border-radius: 50%; animation: pulse 1.5s infinite; }
     @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.5;transform:scale(1.3)} }
     .glow { box-shadow: 0 0 30px rgba(59,130,246,0.15); }
 </style>
@@ -170,19 +170,15 @@ function layout({ title, page, content }) {
         <div class="p-6 border-b border-gray-800">
             <div class="flex items-center gap-3">
                 <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
-                    <span class="text-2xl">🎮</span>
+                    <span class="text-2xl">🚀</span>
                 </div>
                 <div>
-                    <div class="font-bold text-white">Trade Panel</div>
-                    <div class="text-xs text-gray-500">v1.0.0</div>
+                    <div class="font-bold text-white">Script Host</div>
+                    <div class="text-xs text-gray-500">v2.0</div>
                 </div>
             </div>
         </div>
-
-        <nav class="flex-1 p-4 space-y-2">
-            ${navHTML}
-        </nav>
-
+        <nav class="flex-1 p-4 space-y-2">${navHTML}</nav>
         <div class="p-4 border-t border-gray-800">
             <a href="/logout" class="flex items-center gap-3 px-4 py-3 rounded-xl text-red-400 hover:bg-red-500/10">
                 <span class="text-xl">🚪</span>
@@ -190,16 +186,9 @@ function layout({ title, page, content }) {
             </a>
         </div>
     </aside>
-
-    <main class="flex-1 overflow-auto">
-        ${content}
-    </main>
+    <main class="flex-1 overflow-auto">${content}</main>
 </div>
 
-<script>
-    // تحديث تلقائي كل 5 ثواني
-    setTimeout(() => location.reload(), 5000);
-</script>
 </body>
 </html>`;
 }
@@ -212,7 +201,7 @@ app.get('/login', (req, res) => {
     res.send(`<!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
-<meta charset="UTF-8"><title>تسجيل دخول</title>
+<meta charset="UTF-8"><title>دخول</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap" rel="stylesheet">
 <style>* { font-family: 'Cairo', sans-serif; } body { background: linear-gradient(135deg, #0f0f16 0%, #1a1a2e 50%, #0f0f16 100%); }</style>
@@ -222,10 +211,9 @@ app.get('/login', (req, res) => {
 <div class="bg-gray-900/60 backdrop-blur border border-gray-800 rounded-2xl shadow-2xl p-8">
     <div class="text-center mb-8">
         <div class="inline-block p-4 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl mb-4">
-            <span class="text-5xl">🔄</span>
+            <span class="text-5xl">🚀</span>
         </div>
-        <h1 class="text-3xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">Trade Dashboard</h1>
-        <p class="text-gray-400 mt-2 text-sm">أدخل كلمة مرور الأدمن</p>
+        <h1 class="text-3xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">Script Host</h1>
     </div>
     ${err}
     <form method="POST" action="/login" class="space-y-4">
@@ -254,7 +242,7 @@ app.get('/logout', (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════
-// 📊 Dashboard الرئيسية
+// 📊 Dashboard
 // ═══════════════════════════════════════════════════════
 app.get('/', (req, res) => res.redirect('/dashboard'));
 
@@ -268,11 +256,11 @@ app.get('/dashboard', adminAuth, (req, res) => {
 
     const stats = [
         { icon: '🟢', num: online.length, lbl: 'متصل الآن', color: 'emerald' },
-        { icon: '📤', num: uniquePosters.size, lbl: 'ناشرون (5 د)', color: 'blue' },
+        { icon: '📤', num: uniquePosters.size, lbl: 'ناشرون (5د)', color: 'blue' },
         { icon: '🔄', num: active.length, lbl: 'عروض نشطة', color: 'orange' },
         { icon: '💬', num: activeConversations, lbl: 'محادثات', color: 'cyan' },
         { icon: '📨', num: pendingRequests, lbl: 'طلبات معلقة', color: 'purple' },
-        { icon: '✉️', num: totalMessages, lbl: 'إجمالي الرسائل', color: 'pink' },
+        { icon: '📜', num: totalLoads, lbl: 'تحميل السكربت', color: 'pink' },
     ];
 
     const statsHTML = stats.map(s => `
@@ -285,7 +273,7 @@ app.get('/dashboard', adminAuth, (req, res) => {
 
     const onlineHTML = online.length === 0
         ? '<div class="text-center py-8 text-gray-500 text-sm">لا أحد متصل</div>'
-        : online.sort((a, b) => b.lastSeen - a.lastSeen).map(u => `
+        : online.sort((a, b) => b.lastSeen - a.lastSeen).slice(0, 10).map(u => `
             <div class="flex items-center gap-3 p-3 bg-gray-800/40 rounded-xl border border-gray-800 mb-2">
                 <img src="https://www.roblox.com/headshot-thumbnail/image?userId=${u.robloxId}&width=150&height=150&format=png"
                      class="w-10 h-10 rounded-full border-2 border-emerald-500" onerror="this.style.display='none'">
@@ -297,8 +285,8 @@ app.get('/dashboard', adminAuth, (req, res) => {
         `).join('');
 
     const postersHTML = uniquePosters.size === 0
-        ? '<div class="text-center py-8 text-gray-500 text-sm">لا يوجد ناشرين حالياً</div>'
-        : [...uniquePosters].map(uid => {
+        ? '<div class="text-center py-8 text-gray-500 text-sm">لا يوجد ناشرين</div>'
+        : [...uniquePosters].slice(0, 10).map(uid => {
             const u = users[uid];
             const count = recentPostersList.filter(t => t.fromId == uid).length;
             return `
@@ -306,7 +294,7 @@ app.get('/dashboard', adminAuth, (req, res) => {
                     <img src="https://www.roblox.com/headshot-thumbnail/image?userId=${uid}&width=150&height=150&format=png"
                          class="w-10 h-10 rounded-full border-2 border-blue-500" onerror="this.style.display='none'">
                     <div class="flex-1 min-w-0">
-                        <div class="font-semibold text-white text-sm truncate">${esc(u ? u.username : 'ID: ' + uid)}</div>
+                        <div class="font-semibold text-white text-sm truncate">${esc(u ? u.username : 'ID:' + uid)}</div>
                         <div class="text-xs text-blue-400">${count} عرض</div>
                     </div>
                 </div>`;
@@ -317,7 +305,7 @@ app.get('/dashboard', adminAuth, (req, res) => {
             <div class="flex items-center justify-between">
                 <div>
                     <h1 class="text-2xl font-bold text-white">📊 لوحة التحكم</h1>
-                    <p class="text-gray-500 text-sm mt-1">مراقبة مباشرة للسوق والدردشات</p>
+                    <p class="text-gray-500 text-sm mt-1">مراقبة مباشرة</p>
                 </div>
                 <div class="flex items-center gap-2 px-4 py-2 bg-emerald-500/10 border border-emerald-500/30 rounded-xl">
                     <div class="pulse-dot"></div>
@@ -329,27 +317,24 @@ app.get('/dashboard', adminAuth, (req, res) => {
         <div class="p-6 space-y-6">
             <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">${statsHTML}</div>
 
-            <!-- Chart -->
             <div class="bg-gray-900/60 border border-gray-800 rounded-2xl p-6">
                 <h2 class="font-bold text-white mb-4 flex items-center gap-2"><span class="text-xl">📈</span> النشاط المباشر</h2>
-                <div style="height: 250px;">
-                    <canvas id="activityChart"></canvas>
-                </div>
+                <div style="height: 250px;"><canvas id="activityChart"></canvas></div>
             </div>
 
             <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div class="bg-gray-900/60 border border-gray-800 rounded-2xl overflow-hidden">
                     <div class="p-5 border-b border-gray-800 flex items-center justify-between">
-                        <h2 class="font-bold text-white flex items-center gap-2"><span class="text-xl">🟢</span> المتصلين الآن</h2>
-                        <span class="text-xs text-gray-500">${online.length} لاعب</span>
+                        <h2 class="font-bold text-white flex items-center gap-2"><span class="text-xl">🟢</span> المتصلين</h2>
+                        <span class="text-xs text-gray-500">${online.length}</span>
                     </div>
                     <div class="p-4 max-h-80 overflow-auto">${onlineHTML}</div>
                 </div>
 
                 <div class="bg-gray-900/60 border border-gray-800 rounded-2xl overflow-hidden">
                     <div class="p-5 border-b border-gray-800 flex items-center justify-between">
-                        <h2 class="font-bold text-white flex items-center gap-2"><span class="text-xl">📤</span> آخر الناشرين (5 د)</h2>
-                        <span class="text-xs text-gray-500">${uniquePosters.size} ناشر</span>
+                        <h2 class="font-bold text-white flex items-center gap-2"><span class="text-xl">📤</span> الناشرين (5د)</h2>
+                        <span class="text-xs text-gray-500">${uniquePosters.size}</span>
                     </div>
                     <div class="p-4 max-h-80 overflow-auto">${postersHTML}</div>
                 </div>
@@ -358,50 +343,24 @@ app.get('/dashboard', adminAuth, (req, res) => {
 
         <script>
             const timeline = ${JSON.stringify(timeline)};
-
             const labels = timeline.map(t => {
                 const d = new Date(t.time);
-                return d.getHours().toString().padStart(2, '0') + ':' + d.getMinutes().toString().padStart(2, '0') + ':' + d.getSeconds().toString().padStart(2, '0');
+                return d.getHours().toString().padStart(2,'0') + ':' + d.getMinutes().toString().padStart(2,'0');
             });
-
             const ctx = document.getElementById('activityChart').getContext('2d');
             new Chart(ctx, {
                 type: 'line',
                 data: {
                     labels: labels,
                     datasets: [
-                        {
-                            label: 'متصلين',
-                            data: timeline.map(t => t.online),
-                            borderColor: '#10b981',
-                            backgroundColor: 'rgba(16, 185, 129, 0.1)',
-                            tension: 0.4,
-                            fill: true,
-                        },
-                        {
-                            label: 'عروض',
-                            data: timeline.map(t => t.trades),
-                            borderColor: '#f59e0b',
-                            backgroundColor: 'rgba(245, 158, 11, 0.1)',
-                            tension: 0.4,
-                            fill: true,
-                        },
-                        {
-                            label: 'محادثات',
-                            data: timeline.map(t => t.conversations),
-                            borderColor: '#06b6d4',
-                            backgroundColor: 'rgba(6, 182, 212, 0.1)',
-                            tension: 0.4,
-                            fill: true,
-                        },
+                        { label: 'متصلين', data: timeline.map(t => t.online), borderColor: '#10b981', backgroundColor: 'rgba(16,185,129,0.1)', tension: 0.4, fill: true },
+                        { label: 'عروض', data: timeline.map(t => t.trades), borderColor: '#f59e0b', backgroundColor: 'rgba(245,158,11,0.1)', tension: 0.4, fill: true },
+                        { label: 'محادثات', data: timeline.map(t => t.conversations), borderColor: '#06b6d4', backgroundColor: 'rgba(6,182,212,0.1)', tension: 0.4, fill: true },
                     ]
                 },
                 options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        legend: { labels: { color: '#e4e4ed' } }
-                    },
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { labels: { color: '#e4e4ed' } } },
                     scales: {
                         x: { ticks: { color: '#8888a0', maxTicksLimit: 10 }, grid: { color: '#2a2a3e' } },
                         y: { ticks: { color: '#8888a0' }, grid: { color: '#2a2a3e' }, beginAtZero: true }
@@ -415,11 +374,415 @@ app.get('/dashboard', adminAuth, (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════
-// 🔄 صفحة العروض
+// 📜 Scripts Management
+// ═══════════════════════════════════════════════════════
+app.get('/scripts', adminAuth, (req, res) => {
+    const list = Object.values(scripts).sort((a, b) => b.updatedAt - a.updatedAt);
+    const host = req.protocol + '://' + req.get('host');
+
+    const html = list.length === 0
+        ? `<div class="text-center py-16 col-span-full">
+             <div class="text-6xl mb-4">📜</div>
+             <div class="text-gray-400 mb-2">لا توجد سكربتات</div>
+             <div class="text-gray-500 text-sm mb-6">ارفع سكربتك ليصبح متاح للتحميل</div>
+             <a href="/scripts/new" class="inline-block px-6 py-3 bg-gradient-to-r from-blue-500 to-purple-600 text-white font-bold rounded-xl">+ ارفع أول سكربت</a>
+           </div>`
+        : list.map(s => {
+            const url = host + '/load/' + s.name;
+            const loadCmd = `loadstring(game:HttpGet("${url}"))()`;
+            return `
+            <div class="bg-gray-900/60 border border-gray-800 rounded-2xl p-5 hover:border-blue-500/50 transition">
+                <div class="flex items-start justify-between mb-4">
+                    <div>
+                        <div class="flex items-center gap-2">
+                            <span class="text-2xl">📜</span>
+                            <h3 class="text-xl font-bold text-white">${esc(s.name)}</h3>
+                        </div>
+                        <p class="text-gray-400 text-sm mt-1">${esc(s.description || 'بدون وصف')}</p>
+                    </div>
+                    <div class="text-right">
+                        <div class="text-2xl font-bold text-emerald-400">${s.loads || 0}</div>
+                        <div class="text-xs text-gray-500">تحميل</div>
+                    </div>
+                </div>
+
+                <div class="bg-gray-950 border border-gray-800 rounded-xl p-3 mb-3">
+                    <div class="text-xs text-gray-500 mb-2">🔗 loadstring مباشر (انسخ والصق في Roblox):</div>
+                    <div class="flex items-center gap-2">
+                        <code class="flex-1 text-emerald-400 text-xs overflow-x-auto whitespace-nowrap">${esc(loadCmd)}</code>
+                        <button onclick="copyCmd('${esc(loadCmd).replace(/'/g, "\\'")}')" 
+                                class="px-3 py-1.5 bg-blue-500/20 text-blue-400 rounded-lg hover:bg-blue-500/30 text-xs font-semibold whitespace-nowrap">
+                            📋 نسخ
+                        </button>
+                    </div>
+                </div>
+
+                <div class="flex gap-2 text-xs text-gray-500 mb-3">
+                    <span>آخر تحديث: ${timeAgo(s.updatedAt)}</span>
+                    <span>•</span>
+                    <span>${s.content.length} حرف</span>
+                </div>
+
+                <div class="flex gap-2">
+                    <a href="/scripts/edit/${s.name}" class="flex-1 py-2 bg-blue-500/20 text-blue-400 rounded-lg hover:bg-blue-500/30 text-sm font-semibold text-center">✏️ تعديل</a>
+                    <form method="POST" action="/admin/scripts/delete" onsubmit="return confirm('حذف؟')" class="flex-1">
+                        <input type="hidden" name="name" value="${esc(s.name)}">
+                        <button type="submit" class="w-full py-2 bg-red-500/20 text-red-400 rounded-lg hover:bg-red-500/30 text-sm font-semibold">🗑️ حذف</button>
+                    </form>
+                    <a href="/load/${s.name}" target="_blank" class="flex-1 py-2 bg-emerald-500/20 text-emerald-400 rounded-lg hover:bg-emerald-500/30 text-sm font-semibold text-center">👁️ معاينة</a>
+                </div>
+            </div>`;
+        }).join('');
+
+    const content = `
+        <header class="bg-gray-900/60 backdrop-blur border-b border-gray-800 p-6 sticky top-0 z-10">
+            <div class="flex items-center justify-between flex-wrap gap-4">
+                <div>
+                    <h1 class="text-2xl font-bold text-white">📜 السكربتات</h1>
+                    <p class="text-gray-500 text-sm mt-1">ارفع سكربتك واحصل على loadstring مباشر</p>
+                </div>
+                <a href="/scripts/new" class="px-5 py-2.5 bg-gradient-to-r from-emerald-500 to-emerald-600 text-white font-bold rounded-xl">+ ارفع سكربت</a>
+            </div>
+        </header>
+        <div class="p-6">
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">${html}</div>
+        </div>
+        <script>
+            function copyCmd(cmd) {
+                navigator.clipboard.writeText(cmd).then(() => alert('✅ تم النسخ!\\n\\n' + cmd));
+            }
+        </script>
+    `;
+
+    res.send(layout({ title: 'السكربتات', page: 'scripts', content }));
+});
+
+// نموذج رفع سكربت جديد
+app.get('/scripts/new', adminAuth, (req, res) => {
+    const content = `
+        <header class="bg-gray-900/60 backdrop-blur border-b border-gray-800 p-6 sticky top-0 z-10">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h1 class="text-2xl font-bold text-white">➕ رفع سكربت</h1>
+                    <p class="text-gray-500 text-sm mt-1">الصق كود Luau كامل</p>
+                </div>
+                <a href="/scripts" class="px-5 py-2.5 bg-gray-800 text-white font-bold rounded-xl">← رجوع</a>
+            </div>
+        </header>
+        <div class="p-6">
+            <form method="POST" action="/admin/scripts/save" class="bg-gray-900/60 border border-gray-800 rounded-2xl p-6 space-y-5">
+                <div>
+                    <label class="block text-gray-300 text-sm font-semibold mb-2">اسم السكربت (إنجليزي بدون مسافات)</label>
+                    <input type="text" name="name" required pattern="[a-zA-Z0-9_\\-]{1,64}" placeholder="trade-feed"
+                        class="w-full px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-xl text-white focus:border-blue-500 focus:outline-none">
+                    <p class="text-xs text-gray-500 mt-1">يُستخدم في: <code class="text-blue-400">/load/اسم-السكربت</code></p>
+                </div>
+                <div>
+                    <label class="block text-gray-300 text-sm font-semibold mb-2">الوصف (اختياري)</label>
+                    <input type="text" name="description" placeholder="سكربت مقايضة السيارات"
+                        class="w-full px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-xl text-white focus:border-blue-500 focus:outline-none">
+                </div>
+                <div>
+                    <label class="block text-gray-300 text-sm font-semibold mb-2">كود السكربت (Luau)</label>
+                    <textarea name="content" required rows="25" placeholder="-- الصق كود السكربت هنا"
+                        class="w-full px-4 py-3 bg-gray-950 border border-gray-700 rounded-xl text-emerald-400 text-sm focus:border-blue-500 focus:outline-none resize-y"></textarea>
+                </div>
+                <div class="flex gap-3 pt-2">
+                    <button type="submit" class="flex-1 py-3 bg-gradient-to-r from-emerald-500 to-emerald-600 text-white font-bold rounded-xl">💾 حفظ</button>
+                    <a href="/scripts" class="flex-1 py-3 bg-gray-800 text-white font-bold rounded-xl text-center">إلغاء</a>
+                </div>
+            </form>
+        </div>
+    `;
+    res.send(layout({ title: 'سكربت جديد', page: 'scripts', content }));
+});
+
+app.get('/scripts/edit/:name', adminAuth, (req, res) => {
+    const s = scripts[req.params.name];
+    if (!s) return res.redirect('/scripts');
+
+    const content = `
+        <header class="bg-gray-900/60 backdrop-blur border-b border-gray-800 p-6 sticky top-0 z-10">
+            <div class="flex items-center justify-between">
+                <h1 class="text-2xl font-bold text-white">✏️ ${esc(s.name)}</h1>
+                <a href="/scripts" class="px-5 py-2.5 bg-gray-800 text-white font-bold rounded-xl">← رجوع</a>
+            </div>
+        </header>
+        <div class="p-6">
+            <form method="POST" action="/admin/scripts/save" class="bg-gray-900/60 border border-gray-800 rounded-2xl p-6 space-y-5">
+                <input type="hidden" name="originalName" value="${esc(s.name)}">
+                <div>
+                    <label class="block text-gray-300 text-sm font-semibold mb-2">اسم السكربت</label>
+                    <input type="text" name="name" required pattern="[a-zA-Z0-9_\\-]{1,64}" value="${esc(s.name)}"
+                        class="w-full px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-xl text-white">
+                </div>
+                <div>
+                    <label class="block text-gray-300 text-sm font-semibold mb-2">الوصف</label>
+                    <input type="text" name="description" value="${esc(s.description || '')}"
+                        class="w-full px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-xl text-white">
+                </div>
+                <div>
+                    <label class="block text-gray-300 text-sm font-semibold mb-2">الكود</label>
+                    <textarea name="content" required rows="25"
+                        class="w-full px-4 py-3 bg-gray-950 border border-gray-700 rounded-xl text-emerald-400 text-sm">${esc(s.content)}</textarea>
+                </div>
+                <div class="flex gap-3">
+                    <button type="submit" class="flex-1 py-3 bg-gradient-to-r from-emerald-500 to-emerald-600 text-white font-bold rounded-xl">💾 حفظ</button>
+                    <a href="/scripts" class="flex-1 py-3 bg-gray-800 text-white font-bold rounded-xl text-center">إلغاء</a>
+                </div>
+            </form>
+        </div>
+    `;
+    res.send(layout({ title: 'تعديل', page: 'scripts', content }));
+});
+
+// حفظ سكربت
+app.post('/admin/scripts/save', adminAuth, (req, res) => {
+    const { name, description, content, originalName } = req.body;
+    if (!name || !content) return res.status(400).send('Missing data');
+    if (!validName(name)) return res.status(400).send('Invalid name');
+
+    if (originalName && originalName !== name && scripts[originalName]) delete scripts[originalName];
+
+    const isNew = !scripts[name];
+    scripts[name] = {
+        name,
+        description: description || '',
+        content: String(content),
+        updatedAt: Date.now(),
+        createdAt: scripts[name]?.createdAt || Date.now(),
+        loads: scripts[name]?.loads || 0,
+    };
+    addLog('script_save', `${isNew ? '➕' : '✏️'} ${name}`);
+    res.redirect('/scripts');
+});
+
+app.post('/admin/scripts/delete', adminAuth, (req, res) => {
+    const { name } = req.body;
+    if (scripts[name]) {
+        delete scripts[name];
+        addLog('script_delete', `🗑️ ${name}`);
+    }
+    res.redirect('/scripts');
+});
+
+// ═══════════════════════════════════════════════════════
+// 🚀 Loadstring endpoint
+// ═══════════════════════════════════════════════════════
+app.get('/load/:name', (req, res) => {
+    const s = scripts[req.params.name];
+    if (!s) {
+        return res.status(404).type('text/plain').send(`warn("[HOST] ❌ السكربت '${req.params.name}' غير موجود")`);
+    }
+
+    s.loads = (s.loads || 0) + 1;
+    s.lastLoaded = Date.now();
+    totalLoads++;
+
+    addLog('load', `⚡ تحميل "${s.name}" (${s.loads})`);
+
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+
+    const header = `-- ═══════════════════════════════════════════\n-- ${s.name}\n-- ${s.description || ''}\n-- Host: ${req.get('host')}\n-- Time: ${new Date().toISOString()}\n-- ═══════════════════════════════════════════\n\n`;
+
+    res.send(header + s.content);
+});
+
+// ═══════════════════════════════════════════════════════
+// 🔌 APIs — يستقبل من Roblox
+// ═══════════════════════════════════════════════════════
+app.get('/dashboard/stats', apiAuth, (req, res) => {
+    res.json({
+        online: getOnlineUsers().length,
+        totalUsers: Object.keys(users).length,
+        activeTrades: activeTrades().length,
+        totalTrades,
+        totalMessages,
+        conversations: Object.keys(conversations).length,
+        totalLoads,
+        uptime: Date.now() - START_TIME,
+    });
+});
+
+app.post('/api/register', apiAuth, (req, res) => {
+    const { robloxId, username, jobId } = req.body;
+    if (!robloxId) return res.status(400).json({ error: 'Missing robloxId' });
+    const isNew = !users[robloxId];
+    users[robloxId] = {
+        robloxId: parseInt(robloxId),
+        username: username || 'Unknown',
+        jobId: jobId || '',
+        lastSeen: Date.now(),
+        joinedAt: users[robloxId]?.joinedAt || Date.now(),
+        tradesCreated: users[robloxId]?.tradesCreated || 0,
+        messagesSent: users[robloxId]?.messagesSent || 0,
+    };
+    if (isNew) addLog('register', `${username} سجل دخول`);
+    res.json({ success: true });
+});
+
+app.post('/api/heartbeat', apiAuth, (req, res) => {
+    const { robloxId } = req.body;
+    if (!robloxId) return res.status(400).json({ error: 'Missing robloxId' });
+    if (!users[robloxId]) {
+        users[robloxId] = { robloxId: parseInt(robloxId), username: 'Unknown', lastSeen: Date.now(), tradesCreated: 0, messagesSent: 0 };
+    } else {
+        users[robloxId].lastSeen = Date.now();
+    }
+    res.json({ success: true });
+});
+
+app.post('/api/trade/create', apiAuth, (req, res) => {
+    const { fromId, fromName, myItems, theirItems, note, jobId } = req.body;
+    if (!fromId) return res.status(400).json({ error: 'Missing fromId' });
+
+    const id = 'tr_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    const trade = {
+        id,
+        fromId: parseInt(fromId),
+        fromName: fromName || 'Unknown',
+        myItems: Array.isArray(myItems) ? myItems : [],
+        theirItems: Array.isArray(theirItems) ? theirItems : [],
+        note: note || '',
+        jobId: jobId || '',
+        status: 'pending',
+        createdAt: Date.now(),
+    };
+    trades[id] = trade;
+    totalTrades++;
+    if (users[fromId]) users[fromId].tradesCreated = (users[fromId].tradesCreated || 0) + 1;
+    addLog('create', `${fromName} نشر عرض`);
+    res.json({ success: true, tradeId: id, trade });
+});
+
+app.get('/api/trades/all', apiAuth, (req, res) => res.json(activeTrades()));
+
+app.post('/api/trade/:id/delete', apiAuth, (req, res) => {
+    const trade = trades[req.params.id];
+    if (!trade) return res.status(404).json({ error: 'Not found' });
+    delete trades[req.params.id];
+    addLog('delete', `${trade.fromName} حذف عرضه`);
+    res.json({ success: true });
+});
+
+app.post('/api/trade/request', apiAuth, (req, res) => {
+    const { tradeId, fromId, fromName, toId, toName, myItems } = req.body;
+    if (!fromId || !toId) return res.status(400).json({ error: 'Missing data' });
+
+    const id = 'req_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    tradeRequests[id] = {
+        id, tradeId,
+        fromId: parseInt(fromId), fromName,
+        toId: parseInt(toId), toName,
+        myItems: Array.isArray(myItems) ? myItems : [],
+        status: 'pending',
+        createdAt: Date.now(),
+    };
+    addLog('request', `${fromName} → ${toName}`);
+    res.json({ success: true, requestId: id });
+});
+
+app.get('/api/trade/requests/list/:userId', apiAuth, (req, res) => {
+    const uid = parseInt(req.params.userId);
+    const list = Object.values(tradeRequests)
+        .filter(r => (r.fromId === uid || r.toId === uid) && r.status !== 'rejected' && r.status !== 'cancelled')
+        .sort((a, b) => b.createdAt - a.createdAt);
+    res.json(list);
+});
+
+app.post('/api/trade/request/accept', apiAuth, (req, res) => {
+    const { requestId, userId } = req.body;
+    const r = tradeRequests[requestId];
+    if (!r) return res.status(404).json({ error: 'Not found' });
+    r.status = 'accepted';
+    r.acceptedAt = Date.now();
+    const key = convKey(r.fromId, r.toId);
+    if (!conversations[key]) conversations[key] = [];
+    addLog('accept', `✅ ${r.toName} قبل ${r.fromName}`);
+    res.json({ success: true, requestId: r.id, otherId: r.fromId, otherName: r.fromName });
+});
+
+app.post('/api/trade/request/reject', apiAuth, (req, res) => {
+    const { requestId } = req.body;
+    const r = tradeRequests[requestId];
+    if (!r) return res.status(404).json({ error: 'Not found' });
+    r.status = 'rejected';
+    r.rejectedAt = Date.now();
+    addLog('reject', `${r.toName} رفض ${r.fromName}`);
+    res.json({ success: true });
+});
+
+app.get('/api/dm/conversations/:userId', apiAuth, (req, res) => {
+    const uid = parseInt(req.params.userId);
+    const result = [];
+    const seen = new Set();
+
+    for (const key in conversations) {
+        const [a, b] = key.split('_').map(Number);
+        if (a === uid || b === uid) {
+            const otherId = a === uid ? b : a;
+            if (seen.has(otherId)) continue;
+            seen.add(otherId);
+            const msgs = conversations[key];
+            result.push({
+                userId: otherId,
+                name: users[otherId]?.username || 'Player' + otherId,
+                lastMsg: msgs.length ? msgs[msgs.length - 1].message : '',
+                lastTime: msgs.length ? msgs[msgs.length - 1].time : 0,
+            });
+        }
+    }
+    for (const id in tradeRequests) {
+        const r = tradeRequests[id];
+        if (r.status !== 'accepted') continue;
+        let otherId, otherName;
+        if (r.fromId === uid) { otherId = r.toId; otherName = r.toName; }
+        else if (r.toId === uid) { otherId = r.fromId; otherName = r.fromName; }
+        else continue;
+        if (seen.has(otherId)) continue;
+        seen.add(otherId);
+        result.push({ userId: otherId, name: otherName, lastMsg: '— جديدة —', lastTime: r.acceptedAt || r.createdAt });
+    }
+    result.sort((a, b) => (b.lastTime || 0) - (a.lastTime || 0));
+    res.json(result);
+});
+
+app.get('/api/dm/messages/:fromId/:toId', apiAuth, (req, res) => {
+    const key = convKey(req.params.fromId, req.params.toId);
+    res.json({ messages: conversations[key] || [] });
+});
+
+app.post('/api/dm/send', apiAuth, (req, res) => {
+    const { fromId, fromName, toId, toName, message } = req.body;
+    if (!fromId || !toId || !message) return res.status(400).json({ error: 'Missing data' });
+
+    const key = convKey(fromId, toId);
+    if (!conversations[key]) conversations[key] = [];
+    conversations[key].push({
+        fromId: parseInt(fromId),
+        fromName: fromName || 'Unknown',
+        toId: parseInt(toId),
+        toName: toName || 'Unknown',
+        message: String(message).trim(),
+        time: Date.now(),
+    });
+    if (conversations[key].length > 500) conversations[key].splice(0, conversations[key].length - 500);
+
+    totalMessages++;
+    if (users[fromId]) users[fromId].messagesSent = (users[fromId].messagesSent || 0) + 1;
+
+    addLog('dm', `${fromName} → ${toName}`);
+    res.json({ success: true });
+});
+
+// ═══════════════════════════════════════════════════════
+// 🔄 Trades Page
 // ═══════════════════════════════════════════════════════
 app.get('/trades', adminAuth, (req, res) => {
-    const list = activeTrades();
     const allList = Object.values(trades).sort((a, b) => b.createdAt - a.createdAt).slice(0, 50);
+    const active = activeTrades();
 
     const html = allList.length === 0
         ? '<div class="text-center py-12 text-gray-500">لا توجد عروض</div>'
@@ -431,22 +794,16 @@ app.get('/trades', adminAuth, (req, res) => {
                     <div class="flex items-center justify-between mb-2">
                         <div class="flex items-center gap-3">
                             <img src="https://www.roblox.com/headshot-thumbnail/image?userId=${t.fromId}&width=150&height=150&format=png"
-                                 class="w-10 h-10 rounded-full border-2 ${isActive ? 'border-emerald-500' : 'border-gray-700'}" onerror="this.style.display='none'">
+                                 class="w-10 h-10 rounded-full border-2 ${isActive ? 'border-emerald-500' : 'border-gray-700'}">
                             <div>
                                 <div class="font-bold text-white">${esc(t.fromName)}</div>
                                 <div class="text-xs text-gray-500">منذ ${age} ثانية</div>
                             </div>
                         </div>
-                        <span class="px-3 py-1 rounded-lg text-xs font-bold ${isActive ? 'bg-emerald-500/20 text-emerald-400' : 'bg-gray-700 text-gray-400'}">
-                            ${isActive ? '🟢 نشط' : '⚫ منتهي'}
-                        </span>
+                        <span class="px-3 py-1 rounded-lg text-xs font-bold ${isActive ? 'bg-emerald-500/20 text-emerald-400' : 'bg-gray-700 text-gray-400'}">${isActive ? '🟢 نشط' : '⚫ منتهي'}</span>
                     </div>
-                    <div class="text-sm text-gray-300 mb-2">
-                        <span class="text-gray-500">🚗 يعطي:</span> ${(t.myItems || []).map(i => esc(String(i).split('||')[0])).join(' • ') || '—'}
-                    </div>
-                    <div class="text-sm text-gray-300">
-                        <span class="text-gray-500">🎯 يبي:</span> ${(t.theirItems || []).join(' • ') || 'أي عرض'}
-                    </div>
+                    <div class="text-sm text-gray-300 mb-2"><span class="text-gray-500">🚗 يعطي:</span> ${(t.myItems || []).map(i => esc(String(i).split('||')[0])).join(' • ') || '—'}</div>
+                    <div class="text-sm text-gray-300"><span class="text-gray-500">🎯 يبي:</span> ${(t.theirItems || []).join(' • ') || 'أي عرض'}</div>
                 </div>`;
         }).join('');
 
@@ -458,52 +815,30 @@ app.get('/trades', adminAuth, (req, res) => {
                     <p class="text-gray-500 text-sm mt-1">آخر 50 عرض</p>
                 </div>
                 <div class="flex gap-3 text-sm">
-                    <span class="px-3 py-2 bg-emerald-500/10 border border-emerald-500/30 rounded-lg text-emerald-400">${list.length} نشط</span>
-                    <span class="px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-gray-300">${allList.length} إجمالي</span>
+                    <span class="px-3 py-2 bg-emerald-500/10 border border-emerald-500/30 rounded-lg text-emerald-400">${active.length} نشط</span>
                 </div>
             </div>
         </header>
         <div class="p-6">${html}</div>
     `;
-
     res.send(layout({ title: 'العروض', page: 'trades', content }));
 });
 
 // ═══════════════════════════════════════════════════════
-// 💬 صفحة الدردشات
+// 💬 Chats Page
 // ═══════════════════════════════════════════════════════
 app.get('/chats', adminAuth, (req, res) => {
     const convList = Object.entries(conversations).map(([key, msgs]) => {
         const [a, b] = key.split('_').map(Number);
-        const userA = users[a];
-        const userB = users[b];
         return {
             key,
-            userA: { id: a, name: userA ? userA.username : 'Player' + a },
-            userB: { id: b, name: userB ? userB.username : 'Player' + b },
+            userA: { id: a, name: users[a]?.username || 'Player' + a },
+            userB: { id: b, name: users[b]?.username || 'Player' + b },
             messages: msgs,
             lastMsg: msgs.length ? msgs[msgs.length - 1] : null,
             count: msgs.length,
         };
     }).sort((a, b) => (b.lastMsg?.time || 0) - (a.lastMsg?.time || 0));
-
-    const stats = [
-        { icon: '💬', num: convList.length, lbl: 'محادثات نشطة' },
-        { icon: '✉️', num: totalMessages, lbl: 'إجمالي الرسائل' },
-        { icon: '📊', num: convList.reduce((s, c) => s + c.count, 0), lbl: 'رسائل في القائمة' },
-    ];
-
-    const statsHTML = stats.map(s => `
-        <div class="bg-gray-900/60 border border-gray-800 rounded-xl p-4">
-            <div class="flex items-center gap-3">
-                <span class="text-2xl">${s.icon}</span>
-                <div>
-                    <div class="text-2xl font-bold text-cyan-400">${s.num}</div>
-                    <div class="text-xs text-gray-500">${s.lbl}</div>
-                </div>
-            </div>
-        </div>
-    `).join('');
 
     const html = convList.length === 0
         ? '<div class="text-center py-12 text-gray-500">لا توجد محادثات</div>'
@@ -512,49 +847,38 @@ app.get('/chats', adminAuth, (req, res) => {
                 <div class="flex items-center justify-between mb-3">
                     <div class="flex items-center gap-3">
                         <div class="flex -space-x-2">
-                            <img src="https://www.roblox.com/headshot-thumbnail/image?userId=${c.userA.id}&width=150&height=150&format=png"
-                                 class="w-10 h-10 rounded-full border-2 border-cyan-500" onerror="this.style.display='none'">
-                            <img src="https://www.roblox.com/headshot-thumbnail/image?userId=${c.userB.id}&width=150&height=150&format=png"
-                                 class="w-10 h-10 rounded-full border-2 border-purple-500" onerror="this.style.display='none'">
+                            <img src="https://www.roblox.com/headshot-thumbnail/image?userId=${c.userA.id}&width=150&height=150&format=png" class="w-10 h-10 rounded-full border-2 border-cyan-500">
+                            <img src="https://www.roblox.com/headshot-thumbnail/image?userId=${c.userB.id}&width=150&height=150&format=png" class="w-10 h-10 rounded-full border-2 border-purple-500">
                         </div>
                         <div>
                             <div class="font-bold text-white">${esc(c.userA.name)} ↔ ${esc(c.userB.name)}</div>
-                            <div class="text-xs text-gray-500">${c.count} رسالة${c.lastMsg ? ' • آخر رسالة: ' + timeAgo(c.lastMsg.time) : ''}</div>
+                            <div class="text-xs text-gray-500">${c.count} رسالة</div>
                         </div>
                     </div>
-                    <span class="px-3 py-1 bg-cyan-500/20 text-cyan-400 rounded-lg text-xs font-bold">💬</span>
                 </div>
                 ${c.lastMsg ? `
-                    <div class="bg-gray-800/50 rounded-lg p-3 mt-2">
-                        <div class="text-xs text-gray-500 mb-1">آخر رسالة من <span class="text-white">${esc(c.lastMsg.fromName || '?')}</span>:</div>
-                        <div class="text-sm text-gray-200">${esc(c.lastMsg.message || '')}</div>
+                    <div class="bg-gray-800/50 rounded-lg p-3">
+                        <div class="text-xs text-gray-500 mb-1">آخر رسالة من <span class="text-white">${esc(c.lastMsg.fromName)}</span>:</div>
+                        <div class="text-sm text-gray-200">${esc(c.lastMsg.message)}</div>
                     </div>
                 ` : ''}
-                <a href="/chats/${c.key}" class="mt-3 inline-block text-sm text-blue-400 hover:text-blue-300">فتح المحادثة كاملة →</a>
+                <a href="/chats/${c.key}" class="mt-3 inline-block text-sm text-blue-400">فتح المحادثة →</a>
             </div>
         `).join('');
 
     const content = `
         <header class="bg-gray-900/60 backdrop-blur border-b border-gray-800 p-6 sticky top-0 z-10">
             <h1 class="text-2xl font-bold text-white">💬 الدردشات</h1>
-            <p class="text-gray-500 text-sm mt-1">كل المحادثات الخاصة بين اللاعبين</p>
+            <p class="text-gray-500 text-sm mt-1">${convList.length} محادثة • ${totalMessages} رسالة</p>
         </header>
-        <div class="p-6 space-y-6">
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">${statsHTML}</div>
-            <div>${html}</div>
-        </div>
+        <div class="p-6">${html}</div>
     `;
-
     res.send(layout({ title: 'الدردشات', page: 'chats', content }));
 });
 
-// محادثة واحدة
 app.get('/chats/:key', adminAuth, (req, res) => {
-    const key = req.params.key;
-    const msgs = conversations[key] || [];
-    const [a, b] = key.split('_').map(Number);
-    const userA = users[a];
-    const userB = users[b];
+    const msgs = conversations[req.params.key] || [];
+    const [a, b] = req.params.key.split('_').map(Number);
 
     const messagesHTML = msgs.length === 0
         ? '<div class="text-center py-8 text-gray-500">لا توجد رسائل</div>'
@@ -573,27 +897,22 @@ app.get('/chats/:key', adminAuth, (req, res) => {
     const content = `
         <header class="bg-gray-900/60 backdrop-blur border-b border-gray-800 p-6 sticky top-0 z-10">
             <div class="flex items-center justify-between">
-                <div>
-                    <h1 class="text-2xl font-bold text-white">💬 ${esc(userA?.username || 'Player'+a)} ↔ ${esc(userB?.username || 'Player'+b)}</h1>
-                    <p class="text-gray-500 text-sm mt-1">${msgs.length} رسالة</p>
-                </div>
-                <a href="/chats" class="px-4 py-2 bg-gray-800 text-white rounded-xl hover:bg-gray-700">← رجوع</a>
+                <h1 class="text-2xl font-bold text-white">💬 ${esc(users[a]?.username || 'Player'+a)} ↔ ${esc(users[b]?.username || 'Player'+b)}</h1>
+                <a href="/chats" class="px-4 py-2 bg-gray-800 text-white rounded-xl">← رجوع</a>
             </div>
         </header>
         <div class="p-6">
             <div class="bg-gray-900/60 border border-gray-800 rounded-2xl p-6">${messagesHTML}</div>
         </div>
     `;
-
     res.send(layout({ title: 'محادثة', page: 'chats', content }));
 });
 
 // ═══════════════════════════════════════════════════════
-// 👥 صفحة اللاعبين
+// 👥 Users Page
 // ═══════════════════════════════════════════════════════
 app.get('/users', adminAuth, (req, res) => {
     const list = Object.values(users).sort((a, b) => b.lastSeen - a.lastSeen);
-
     const rowsHTML = list.length === 0
         ? '<tr><td colspan="5" class="text-center py-12 text-gray-500">لا يوجد لاعبين</td></tr>'
         : list.map(u => `
@@ -617,12 +936,8 @@ app.get('/users', adminAuth, (req, res) => {
 
     const content = `
         <header class="bg-gray-900/60 backdrop-blur border-b border-gray-800 p-6 sticky top-0 z-10">
-            <div class="flex items-center justify-between">
-                <div>
-                    <h1 class="text-2xl font-bold text-white">👥 اللاعبين</h1>
-                    <p class="text-gray-500 text-sm mt-1">${list.length} لاعب مسجل</p>
-                </div>
-            </div>
+            <h1 class="text-2xl font-bold text-white">👥 اللاعبين</h1>
+            <p class="text-gray-500 text-sm mt-1">${list.length} لاعب</p>
         </header>
         <div class="p-6">
             <div class="bg-gray-900/60 border border-gray-800 rounded-2xl overflow-hidden">
@@ -641,15 +956,14 @@ app.get('/users', adminAuth, (req, res) => {
             </div>
         </div>
     `;
-
     res.send(layout({ title: 'اللاعبين', page: 'users', content }));
 });
 
 // ═══════════════════════════════════════════════════════
-// 📋 صفحة السجلات
+// 📋 Logs Page
 // ═══════════════════════════════════════════════════════
 app.get('/logs', adminAuth, (req, res) => {
-    const icons = { register: '👤', create: '📤', delete: '🗑️', dm: '✉️', request: '📨', accept: '✅', reject: '❌' };
+    const icons = { register: '👤', create: '📤', delete: '🗑️', dm: '✉️', request: '📨', accept: '✅', reject: '❌', load: '⚡', script_save: '💾', script_delete: '🗑️' };
     const html = logs.length === 0
         ? '<div class="text-center py-12 text-gray-500">لا توجد أحداث</div>'
         : logs.slice(0, 100).map(l => `
@@ -668,223 +982,11 @@ app.get('/logs', adminAuth, (req, res) => {
             <div class="bg-gray-900/60 border border-gray-800 rounded-2xl overflow-hidden max-h-[700px] overflow-y-auto">${html}</div>
         </div>
     `;
-
     res.send(layout({ title: 'السجلات', page: 'logs', content }));
 });
 
 // ═══════════════════════════════════════════════════════
-// 🔌 APIs — يستقبل من سكربت Roblox
-// ═══════════════════════════════════════════════════════
-
-// إحصائيات
-app.get('/dashboard/stats', apiAuth, (req, res) => {
-    res.json({
-        online: getOnlineUsers().length,
-        totalUsers: Object.keys(users).length,
-        activeTrades: activeTrades().length,
-        totalTrades,
-        totalMessages,
-        totalRequests,
-        conversations: Object.keys(conversations).length,
-        uptime: Date.now() - START_TIME,
-    });
-});
-
-// تسجيل لاعب
-app.post('/api/register', apiAuth, (req, res) => {
-    const { robloxId, username, jobId } = req.body;
-    if (!robloxId) return res.status(400).json({ error: 'Missing robloxId' });
-
-    const isNew = !users[robloxId];
-    users[robloxId] = {
-        robloxId: parseInt(robloxId),
-        username: username || 'Unknown',
-        jobId: jobId || '',
-        lastSeen: Date.now(),
-        joinedAt: users[robloxId]?.joinedAt || Date.now(),
-        tradesCreated: users[robloxId]?.tradesCreated || 0,
-        messagesSent: users[robloxId]?.messagesSent || 0,
-    };
-    if (isNew) addLog('register', `${username} سجل دخول`);
-    res.json({ success: true });
-});
-
-// نبضة
-app.post('/api/heartbeat', apiAuth, (req, res) => {
-    const { robloxId } = req.body;
-    if (!robloxId) return res.status(400).json({ error: 'Missing robloxId' });
-    if (!users[robloxId]) {
-        users[robloxId] = { robloxId: parseInt(robloxId), username: 'Unknown', lastSeen: Date.now(), tradesCreated: 0, messagesSent: 0 };
-    } else {
-        users[robloxId].lastSeen = Date.now();
-    }
-    res.json({ success: true });
-});
-
-// إنشاء عرض
-app.post('/api/trade/create', apiAuth, (req, res) => {
-    const { fromId, fromName, myItems, theirItems, note, jobId } = req.body;
-    if (!fromId) return res.status(400).json({ error: 'Missing fromId' });
-
-    const id = 'tr_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-    const trade = {
-        id,
-        fromId: parseInt(fromId),
-        fromName: fromName || 'Unknown',
-        myItems: Array.isArray(myItems) ? myItems : [],
-        theirItems: Array.isArray(theirItems) ? theirItems : [],
-        note: note || '',
-        jobId: jobId || '',
-        status: 'pending',
-        createdAt: Date.now(),
-    };
-    trades[id] = trade;
-    totalTrades++;
-
-    if (users[fromId]) users[fromId].tradesCreated = (users[fromId].tradesCreated || 0) + 1;
-
-    addLog('create', `${fromName} نشر عرض`);
-    res.json({ success: true, tradeId: id, trade });
-});
-
-// كل العروض
-app.get('/api/trades/all', apiAuth, (req, res) => {
-    res.json(activeTrades());
-});
-
-// حذف عرض
-app.post('/api/trade/:id/delete', apiAuth, (req, res) => {
-    const trade = trades[req.params.id];
-    if (!trade) return res.status(404).json({ error: 'Not found' });
-    delete trades[req.params.id];
-    addLog('delete', `${trade.fromName} حذف عرضه`);
-    res.json({ success: true });
-});
-
-// طلب مقايضة
-app.post('/api/trade/request', apiAuth, (req, res) => {
-    const { tradeId, fromId, fromName, toId, toName, myItems } = req.body;
-    if (!fromId || !toId) return res.status(400).json({ error: 'Missing data' });
-
-    const id = 'req_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-    tradeRequests[id] = {
-        id, tradeId,
-        fromId: parseInt(fromId), fromName,
-        toId: parseInt(toId), toName,
-        myItems: Array.isArray(myItems) ? myItems : [],
-        status: 'pending',
-        createdAt: Date.now(),
-    };
-    totalRequests++;
-    addLog('request', `${fromName} أرسل طلب لـ ${toName}`);
-    res.json({ success: true, requestId: id });
-});
-
-// قائمة الطلبات
-app.get('/api/trade/requests/list/:userId', apiAuth, (req, res) => {
-    const uid = parseInt(req.params.userId);
-    const list = Object.values(tradeRequests)
-        .filter(r => (r.fromId === uid || r.toId === uid) && r.status !== 'rejected' && r.status !== 'cancelled')
-        .sort((a, b) => b.createdAt - a.createdAt);
-    res.json(list);
-});
-
-// قبول
-app.post('/api/trade/request/accept', apiAuth, (req, res) => {
-    const { requestId, userId } = req.body;
-    const r = tradeRequests[requestId];
-    if (!r) return res.status(404).json({ error: 'Not found' });
-    r.status = 'accepted';
-    r.acceptedAt = Date.now();
-
-    const key = convKey(r.fromId, r.toId);
-    if (!conversations[key]) conversations[key] = [];
-
-    addLog('accept', `✅ ${r.toName} قبل عرض ${r.fromName}`);
-    res.json({ success: true, requestId: r.id, otherId: r.fromId, otherName: r.fromName });
-});
-
-// رفض
-app.post('/api/trade/request/reject', apiAuth, (req, res) => {
-    const { requestId } = req.body;
-    const r = tradeRequests[requestId];
-    if (!r) return res.status(404).json({ error: 'Not found' });
-    r.status = 'rejected';
-    r.rejectedAt = Date.now();
-    addLog('reject', `${r.toName} رفض طلب ${r.fromName}`);
-    res.json({ success: true });
-});
-
-// محادثات
-app.get('/api/dm/conversations/:userId', apiAuth, (req, res) => {
-    const uid = parseInt(req.params.userId);
-    const result = [];
-    const seen = new Set();
-
-    for (const key in conversations) {
-        const [a, b] = key.split('_').map(Number);
-        if (a === uid || b === uid) {
-            const otherId = a === uid ? b : a;
-            if (seen.has(otherId)) continue;
-            seen.add(otherId);
-            const msgs = conversations[key];
-            result.push({
-                userId: otherId,
-                name: users[otherId]?.username || 'Player' + otherId,
-                lastMsg: msgs.length ? msgs[msgs.length - 1].message : '',
-                lastTime: msgs.length ? msgs[msgs.length - 1].time : 0,
-            });
-        }
-    }
-
-    for (const id in tradeRequests) {
-        const r = tradeRequests[id];
-        if (r.status !== 'accepted') continue;
-        let otherId, otherName;
-        if (r.fromId === uid) { otherId = r.toId; otherName = r.toName; }
-        else if (r.toId === uid) { otherId = r.fromId; otherName = r.fromName; }
-        else continue;
-        if (seen.has(otherId)) continue;
-        seen.add(otherId);
-        result.push({ userId: otherId, name: otherName, lastMsg: '— جديدة —', lastTime: r.acceptedAt || r.createdAt });
-    }
-
-    result.sort((a, b) => (b.lastTime || 0) - (a.lastTime || 0));
-    res.json(result);
-});
-
-// رسائل محادثة
-app.get('/api/dm/messages/:fromId/:toId', apiAuth, (req, res) => {
-    const key = convKey(req.params.fromId, req.params.toId);
-    res.json({ messages: conversations[key] || [] });
-});
-
-// إرسال رسالة
-app.post('/api/dm/send', apiAuth, (req, res) => {
-    const { fromId, fromName, toId, toName, message } = req.body;
-    if (!fromId || !toId || !message) return res.status(400).json({ error: 'Missing data' });
-
-    const key = convKey(fromId, toId);
-    if (!conversations[key]) conversations[key] = [];
-    conversations[key].push({
-        fromId: parseInt(fromId),
-        fromName: fromName || 'Unknown',
-        toId: parseInt(toId),
-        toName: toName || 'Unknown',
-        message: String(message).trim(),
-        time: Date.now(),
-    });
-    if (conversations[key].length > 500) conversations[key].splice(0, conversations[key].length - 500);
-
-    totalMessages++;
-    if (users[fromId]) users[fromId].messagesSent = (users[fromId].messagesSent || 0) + 1;
-
-    addLog('dm', `${fromName} → ${toName}: ${String(message).slice(0, 30)}`);
-    res.json({ success: true });
-});
-
-// ═══════════════════════════════════════════════════════
-// 🧹 تنظيف
+// 🧹 Cleanup
 // ═══════════════════════════════════════════════════════
 setInterval(() => {
     const now = Date.now();
@@ -905,13 +1007,12 @@ if (require.main === module) {
     app.listen(PORT, () => {
         console.log('');
         console.log('╔══════════════════════════════════════════════╗');
-        console.log('║  🎮 Trade Dashboard v1.0                     ║');
+        console.log('║  🚀 Script Host + Dashboard v2.0             ║');
         console.log('╠══════════════════════════════════════════════╣');
-        console.log(`║  🌐 URL: http://localhost:${PORT}/dashboard`);
-        console.log(`║  🔑 API Key: ${API_KEY}`);
+        console.log(`║  🌐 http://localhost:${PORT}/dashboard`);
+        console.log(`║  🔑 API: ${API_KEY}`);
         console.log(`║  👑 Admin: ${ADMIN_PASSWORD}`);
         console.log('╚══════════════════════════════════════════════╝');
-        console.log('');
     });
 }
 
