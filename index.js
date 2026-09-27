@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════
-// 🚀 Rejoin Self-Reload Host v1.0
+// 🚀 Rejoin Self-Reload Host v1.3
 // ═══════════════════════════════════════════════════════
 const express = require('express');
 const app = express();
@@ -26,6 +26,19 @@ app.use((req, res, next) => {
     next();
 });
 
+// ─── cookie parser ───
+app.use((req, res, next) => {
+    req.cookies = {};
+    const cookie = req.headers.cookie;
+    if (cookie) {
+        cookie.split(';').forEach(c => {
+            const [k, v] = c.trim().split('=');
+            if (k && v) req.cookies[k] = decodeURIComponent(v);
+        });
+    }
+    next();
+});
+
 // ═══════════════════════════════════════════════════════
 // ⚙️ الإعدادات
 // ═══════════════════════════════════════════════════════
@@ -37,6 +50,10 @@ const SESSION_SECRET = process.env.SESSION_SECRET || "secret-" + Math.random().t
 // 🗄️ Database (in-memory)
 // ═══════════════════════════════════════════════════════
 const scripts = {};
+
+// 🎯 تتبع آخر JobId لكل (IP + scriptName)
+// key = "ip:scriptName" → { jobId, timestamp }
+const jobTracker = {};
 
 // ═══════════════════════════════════════════════════════
 // 🛠️ Helpers
@@ -67,18 +84,10 @@ function apiAuth(req, res, next) {
     next();
 }
 
-// cookie parser بسيط
-app.use((req, res, next) => {
-    req.cookies = {};
-    const cookie = req.headers.cookie;
-    if (cookie) {
-        cookie.split(';').forEach(c => {
-            const [k, v] = c.trim().split('=');
-            if (k && v) req.cookies[k] = decodeURIComponent(v);
-        });
-    }
-    next();
-});
+function getClientIp(req) {
+    return (req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown')
+        .split(',')[0].trim();
+}
 
 // ═══════════════════════════════════════════════════════
 // 🎨 Layout
@@ -129,7 +138,7 @@ function layout({ title, page, content }) {
                 </div>
                 <div>
                     <div class="font-bold text-white">Rejoin Host</div>
-                    <div class="text-xs text-gray-500">v1.0</div>
+                    <div class="text-xs text-gray-500">v1.3</div>
                 </div>
             </div>
         </div>
@@ -286,7 +295,7 @@ app.get('/scripts', adminAuth, (req, res) => {
            </div>`
         : list.map(s => {
             const url = host + '/load/' + s.name;
-            const loadCmd = `loadstring(game:HttpGet("${url}"))()`;
+            const loadCmd = `local job = game.JobId; loadstring(game:HttpGet("${url}?job=" .. job))()`;
             return `
             <div class="bg-gray-900/60 border border-gray-800 rounded-2xl p-5 hover:border-blue-500/50 transition">
                 <div class="flex items-start justify-between mb-4">
@@ -304,7 +313,7 @@ app.get('/scripts', adminAuth, (req, res) => {
                     </div>
                 </div>
                 <div class="bg-gray-950 border border-gray-800 rounded-xl p-3 mb-3">
-                    <div class="text-xs text-gray-500 mb-2">🔗 loadstring جاهز:</div>
+                    <div class="text-xs text-gray-500 mb-2">🔗 loadstring جاهز (مع JobId للتتبع):</div>
                     <div class="flex items-center gap-2">
                         <code class="flex-1 text-emerald-400 text-xs overflow-x-auto whitespace-nowrap">${esc(loadCmd)}</code>
                         <button onclick="copyCmd('${esc(loadCmd).replace(/'/g, "\\'")}')"
@@ -329,7 +338,7 @@ app.get('/scripts', adminAuth, (req, res) => {
             <div class="flex items-center justify-between">
                 <div>
                     <h1 class="text-2xl font-bold text-white">📜 السكربتات</h1>
-                    <p class="text-gray-500 text-sm mt-1">ارفع السكربت — يشتغل تلقائياً بعد الريجوين</p>
+                    <p class="text-gray-500 text-sm mt-1">يشتغل تلقائياً عند Rejoin / Hop فقط</p>
                 </div>
                 <a href="/scripts/new" class="px-5 py-2.5 bg-gradient-to-r from-emerald-500 to-emerald-600 text-white font-bold rounded-xl">+ ارفع</a>
             </div>
@@ -339,10 +348,11 @@ app.get('/scripts', adminAuth, (req, res) => {
                 <div class="flex items-start gap-3">
                     <span class="text-2xl">✨</span>
                     <div>
-                        <div class="font-bold text-emerald-400 mb-1">الربط التلقائي مُفعّل</div>
+                        <div class="font-bold text-emerald-400 mb-1">كيف يعمل النظام؟</div>
                         <div class="text-sm text-gray-300">
-                            السيرفر يستبدل <code class="text-emerald-400">API_URL</code> و <code class="text-emerald-400">API_KEY</code> و <code class="text-emerald-400">HOST_URL</code> تلقائياً.
-                            فقط الصق السكربت كما هو.
+                            السيرفر يقارن <code class="text-emerald-400">JobId</code> الحالي بالسابق.<br>
+                            <b>نفس JobId</b> (Leave ثم دخول) → 🚫 لا يفعّل rejoin.<br>
+                            <b>JobId مختلف</b> (Hop/Rejoin) → ✅ يفعّل rejoin تلقائياً.
                         </div>
                     </div>
                 </div>
@@ -370,23 +380,11 @@ app.get('/scripts/new', adminAuth, (req, res) => {
             </div>
         </header>
         <div class="p-6">
-            <div class="bg-emerald-500/10 border border-emerald-500/30 rounded-2xl p-4 mb-6">
-                <div class="flex items-start gap-3">
-                    <span class="text-2xl">🔗</span>
-                    <div>
-                        <div class="font-bold text-emerald-400 mb-1">الربط التلقائي</div>
-                        <div class="text-sm text-gray-300">
-                            الصق السكربت <b>كما هو</b> — السيرفر يستبدل الروابط تلقائياً ويحوّله لنسخة تدعم Rejoin.
-                        </div>
-                    </div>
-                </div>
-            </div>
             <form method="POST" action="/admin/scripts/save" class="bg-gray-900/60 border border-gray-800 rounded-2xl p-6 space-y-5">
                 <div>
                     <label class="block text-gray-300 text-sm font-semibold mb-2">اسم السكربت</label>
                     <input type="text" name="name" required pattern="[a-zA-Z0-9_\\-]{1,64}" placeholder="my-script"
                         class="w-full px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-xl text-white">
-                    <div class="text-xs text-gray-500 mt-1">أحرف إنجليزية وأرقام و _ - فقط</div>
                 </div>
                 <div>
                     <label class="block text-gray-300 text-sm font-semibold mb-2">الوصف (اختياري)</label>
@@ -394,7 +392,7 @@ app.get('/scripts/new', adminAuth, (req, res) => {
                         class="w-full px-4 py-3 bg-gray-800/50 border border-gray-700 rounded-xl text-white">
                 </div>
                 <div>
-                    <label class="block text-gray-300 text-sm font-semibold mb-2">كود السكربت (Lua/Luau)</label>
+                    <label class="block text-gray-300 text-sm font-semibold mb-2">كود السكربت</label>
                     <textarea name="content" required rows="25" placeholder="-- الصق كود السكربت هنا"
                         class="w-full px-4 py-3 bg-gray-950 border border-gray-700 rounded-xl text-emerald-400 text-sm resize-y"></textarea>
                 </div>
@@ -483,7 +481,7 @@ app.post('/admin/scripts/delete', adminAuth, (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════
-// 🚀 Loadstring — Self-Reload Injection
+// 🚀 Loadstring — Rejoin on Job Change only
 // ═══════════════════════════════════════════════════════
 app.get('/load/:name', (req, res) => {
     const s = scripts[req.params.name];
@@ -503,55 +501,85 @@ app.get('/load/:name', (req, res) => {
     const hostUrl = req.protocol + '://' + req.get('host');
     const scriptUrl = hostUrl + '/load/' + s.name;
 
-    // ═══════════════════════════════════════════════════
-    // 🔗 INJECTION HEADER — يشتغل قبل السكربت
-    // ═══════════════════════════════════════════════════
+    // 🎯 JobId اللي يمرره السكربت (?job=xxxx)
+    const currentJob = String(req.query.job || '').trim();
+
+    const clientIp = getClientIp(req);
+    const trackKey = `${clientIp}:${s.name}`;
+
+    const now = Date.now();
+    const last = jobTracker[trackKey];
+
+    // 🎯 القرار
+    let shouldQueue = true;
+    let reason = '';
+
+    if (!currentJob) {
+        // ما فيه JobId → تحميل يدوي مباشر → فعّل
+        shouldQueue = true;
+        reason = 'no jobId — manual load';
+    } else if (!last || !last.jobId) {
+        // أول مرة → فعّل
+        shouldQueue = true;
+        reason = 'first load with jobId';
+    } else if (last.jobId === currentJob) {
+        // نفس السيرفر → Leave ثم دخول → لا تفعّل
+        shouldQueue = false;
+        reason = 'same jobId — normal rejoin/leave';
+    } else {
+        // JobId مختلف → Hop/Rejoin → فعّل
+        shouldQueue = true;
+        reason = `jobId changed: ${last.jobId.slice(0, 8)} → ${currentJob.slice(0, 8)}`;
+    }
+
+    // 💾 تحديث السجل
+    jobTracker[trackKey] = { jobId: currentJob, timestamp: now };
+
+    // 🧹 تنظيف
+    for (const k in jobTracker) {
+        if (now - jobTracker[k].timestamp > 10 * 60 * 1000) {
+            delete jobTracker[k];
+        }
+    }
+
+    // 🔗 بناء البلوك
+    const queueBlock = shouldQueue
+        ? `-- ✅ تفعيل Rejoin (${reason})
+if queue_on_teleport and not _G.__REJOIN_REGISTERED then
+    _G.__REJOIN_REGISTERED = true
+    pcall(function()
+        queue_on_teleport(([[
+            task.wait(3)
+            local job = game.JobId
+            loadstring(game:HttpGet("%s?job=" .. job))()
+        ]]):format("${scriptUrl}"))
+    end)
+end`
+        : `-- 🚫 لا تفعيل Rejoin (${reason})`;
+
     const header = `-- ═══════════════════════════════════════════
 -- ${s.name}
 -- Server: ${hostUrl}
 -- Time: ${new Date().toISOString()}
--- ═══════════════════════════════════════════
--- 🔗 AUTO-INJECTED SELF-RELOAD
+-- JobId: ${currentJob || 'none'}
+-- Rejoin: ${shouldQueue ? 'ENABLED' : 'DISABLED'} (${reason})
 -- ═══════════════════════════════════════════
 _G = _G or {}
 _G.HOST_URL = "${hostUrl}"
 _G.HOST_KEY = "${API_KEY}"
 _G.SCRIPT_URL = "${scriptUrl}"
 
--- ✅ حفظ لـ Rejoin Self-Reload
-if queue_on_teleport then
-    pcall(function()
-        queue_on_teleport(string.format([[
-            task.wait(3)
-            loadstring(game:HttpGet("%s"))()
-        ]], _G.SCRIPT_URL or "${scriptUrl}"))
-    end)
-end
+-- 🔗 REJOIN LOGIC
+${queueBlock}
 -- ═══════════════════════════════════════════\n\n`;
 
     let content = s.content;
 
-    // ✅ استبدال ذكي — يدعم كل الأشكال
-    content = content.replace(
-        /(\bAPI_URL\s*=\s*)["'][^"'\n]*["']/g,
-        '$1_G.HOST_URL'
-    );
-    content = content.replace(
-        /(\bAPI_KEY\s*=\s*)["'][^"'\n]*["']/g,
-        '$1_G.HOST_KEY'
-    );
-    content = content.replace(
-        /(\bBASE_URL\s*=\s*)["'][^"'\n]*["']/g,
-        '$1_G.HOST_URL'
-    );
-    content = content.replace(
-        /(\bHOST_URL\s*=\s*)["'][^"'\n]*["']/g,
-        '$1_G.HOST_URL'
-    );
-    content = content.replace(
-        /(\bHOST_KEY\s*=\s*)["'][^"'\n]*["']/g,
-        '$1_G.HOST_KEY'
-    );
+    content = content.replace(/(\bAPI_URL\s*=\s*)["'][^"'\n]*["']/g, '$1_G.HOST_URL');
+    content = content.replace(/(\bAPI_KEY\s*=\s*)["'][^"'\n]*["']/g, '$1_G.HOST_KEY');
+    content = content.replace(/(\bBASE_URL\s*=\s*)["'][^"'\n]*["']/g, '$1_G.HOST_URL');
+    content = content.replace(/(\bHOST_URL\s*=\s*)["'][^"'\n]*["']/g, '$1_G.HOST_URL');
+    content = content.replace(/(\bHOST_KEY\s*=\s*)["'][^"'\n]*["']/g, '$1_G.HOST_KEY');
 
     res.send(header + content);
 });
@@ -564,6 +592,7 @@ app.get('/api/status', apiAuth, (req, res) => {
         ok: true,
         scripts: Object.keys(scripts).length,
         uptime: process.uptime(),
+        tracked: Object.keys(jobTracker).length,
     });
 });
 
@@ -585,7 +614,7 @@ if (require.main === module) {
     app.listen(PORT, () => {
         console.log('');
         console.log('╔══════════════════════════════════════════════╗');
-        console.log('║  🔄 Rejoin Self-Reload Host v1.0             ║');
+        console.log('║  🔄 Rejoin Self-Reload Host v1.3             ║');
         console.log('╠══════════════════════════════════════════════╣');
         console.log(`║  🌐 http://localhost:${PORT}/dashboard`);
         console.log(`║  🔑 API Key: ${API_KEY}`);
