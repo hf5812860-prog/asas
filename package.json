@@ -1,14 +1,12 @@
 {
-  "name": "roblox-trade-host",
-  "version": "8.0.0",
-  "description": "Roblox Trade Host — Data Receiver + Players Monitor",
+  "name": "rejoin-host",
+  "version": "3.0.0",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "express": "^4.18.2",
-    "cookie-parser": "^1.4.6"
+    "express": "^4.18.2"
   },
   "engines": {
     "node": ">=18.0.0"
