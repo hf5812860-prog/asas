@@ -1,11 +1,7 @@
-/**
- * Render Web Service: يخدم index.html + يمرر /api و /ws إلى الباكند على VPS.
- * يعتمد على express + http-proxy-middleware + ws.
- */
 const express = require("express");
 const path = require("path");
-const { createProxyMiddleware } = require("http-proxy-middleware");
 const http = require("http");
+const { createProxyMiddleware } = require("http-proxy-middleware");
 const httpProxy = require("http-proxy");
 
 const PORT = process.env.PORT || 10000;
@@ -13,7 +9,7 @@ const BACKEND = process.env.BACKEND_URL || "https://api.example.com";
 
 const app = express();
 
-// --- proxy لطلبات /api (HTTP) ---
+// 1) /api → الباكند (HTTP)
 app.use(
   "/api",
   createProxyMiddleware({
@@ -27,41 +23,31 @@ app.use(
   })
 );
 
-// --- خدمة الملفات الثابتة ---
-app.use(express.static(__dirname, {
-  extensions: ["html"],
-  setHeaders: (res) => {
-    res.setHeader("Cache-Control", "no-cache");
-  },
-}));
+// 2) الملفات الثابتة (index.html في الجذر)
+app.use(express.static(__dirname, { extensions: ["html"] }));
 
-// --- fallback: أي مسار غير معروف → index.html ---
+// 3) fallback → index.html
 app.get("*", (_req, res) => {
   res.sendFile(path.join(__dirname, "index.html"));
 });
 
-// --- proxy لـ WebSocket /ws ---
+// 4) /ws → WebSocket proxy يدوياً
 const server = http.createServer(app);
 const wsProxy = httpProxy.createProxyServer({
-  target: BACKEND,
+  target: BACKEND.replace(/^http/, "ws"),
   changeOrigin: true,
   secure: false,
   ws: true,
 });
 
 server.on("upgrade", (req, socket, head) => {
-  if (req.url.startsWith("/ws")) {
-    wsProxy.ws(req, socket, head);
-  } else {
-    socket.destroy();
-  }
+  if (req.url.startsWith("/ws")) wsProxy.ws(req, socket, head);
+  else socket.destroy();
 });
 
 wsProxy.on("error", (err, _req, socket) => {
-  console.error("[ws proxy]", err.message);
+  console.error("[ws]", err.message);
   try { socket.destroy(); } catch {}
 });
 
-server.listen(PORT, () => {
-  console.log(`▶ listening on :${PORT}  → backend: ${BACKEND}`);
-});
+server.listen(PORT, () => console.log(`▶ :${PORT} → ${BACKEND}`));
